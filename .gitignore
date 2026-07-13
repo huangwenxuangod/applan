@@ -1,0 +1,46 @@
+# IDE
+.idea/
+.vscode/
+*.iml
+*.iws
+*.ipr
+.c9/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Android Submodule
+android/.gradle
+android/build
+android/app/build
+android/local.properties
+android/*.apk
+android/*.jks
+android/captures
+
+# Node/Server
+node_modules/
+dist/
+server/node_modules
+server/dist
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+yarn.lock
+
+# Temp & Upload
+.uploads/
+*.log
+*.tmp
+*.bak
+*.zip
+*.rar

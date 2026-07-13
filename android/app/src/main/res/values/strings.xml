@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">LockAI</string>
+
+    <!-- 无障碍服务描述 -->
+    <string name="accessibility_desc">LockAI需要无障碍权限来执行锁屏操作，当AI判定你在找借口玩手机时会自动锁定屏幕。此权限仅用于锁屏功能，不会获取或记录您的任何输入内容。</string>
+
+    <!-- 通知渠道 -->
+    <string name="channel_keep_alive">保活服务</string>
+    <string name="channel_keep_alive_desc">保持应用后台运行以监听屏幕解锁</string>
+    <string name="channel_lock_screen">锁屏提醒</string>
+    <string name="channel_lock_screen_desc">解锁后弹出AI守门人</string>
+
+    <!-- 权限引导文字 -->
+    <string name="perm_autostart">自启动权限</string>
+    <string name="perm_battery">电池优化白名单</string>
+    <string name="perm_accessibility">无障碍服务（锁屏）</string>
+    <string name="perm_overlay">悬浮窗权限</string>
+    <string name="perm_launcher">默认桌面（推荐）</string>
+    <string name="perm_notification">通知权限</string>
+
+    <!-- 设置页 -->
+    <string name="settings_title">设置</string>
+    <string name="server_config">服务器配置</string>
+    <string name="server_address">服务器地址</string>
+    <string name="api_key">API密钥</string>
+    <string name="test_connection">测试连接</string>
+    <string name="permissions">权限管理</string>
+    <string name="about">关于</string>
+    <string name="version">版本 1.0.0</string>
+    <string name="goto_setting">去开启</string>
+    <string name="granted">已开启</string>
+    <string name="not_granted">未开启</string>
+
+    <!-- 聊天页 -->
+    <string name="hint_input">说清楚你要干嘛…</string>
+    <string name="send">发送</string>
+    <string name="greeting">你今天想要干嘛？说清楚，别找借口。</string>
+    <string name="locking">🔒 正在锁屏…</string>
+    <string name="exiting">👋 再见</string>
+    <string name="connecting">连接中…</string>
+    <string name="error_connection">连接失败，请检查服务器配置</string>
+</resources>

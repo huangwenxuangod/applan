@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="primary">#1A1A1A</color>
+    <color name="on_primary">#FFFFFF</color>
+    <color name="accent">#E63946</color>
+    <color name="accent_dim">#C1121F</color>
+    <color name="background_dark">#0D0D0D</color>
+    <color name="surface_dark">#1A1A1A</color>
+    <color name="on_surface_dark">#E5E5E5</color>
+    <color name="on_surface_variant_dark">#888888</color>
+    <color name="background_light">#FAFAFA</color>
+    <color name="surface_light">#FFFFFF</color>
+    <color name="on_surface_light">#1A1A1A</color>
+    <color name="on_surface_variant_light">#999999</color>
+    <color name="ai_message_bg_dark">#252525</color>
+    <color name="ai_message_bg_light">#F0F0F0</color>
+    <color name="user_message_bg">#E63946</color>
+    <color name="user_message_text">#FFFFFF</color>
+</resources>
