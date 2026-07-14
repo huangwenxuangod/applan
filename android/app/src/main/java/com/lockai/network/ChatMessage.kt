@@ -1,10 +1,10 @@
 package com.lockai.network
 
 data class ChatMessage(
-    val role: String, // "system" | "user" | "assistant" | "tool"
+    val role: String,
     val content: String,
-    val toolCalls: MutableList<ToolCall>? = null,
-    val toolCallId: String? = null
+    val toolCallId: String? = null,
+    val toolCalls: MutableList<ToolCall> = mutableListOf()
 )
 
 data class ToolCall(
@@ -15,7 +15,12 @@ data class ToolCall(
 
 sealed class StreamEvent {
     data class Content(val text: String) : StreamEvent()
-    data class ToolCallDelta(val index: Int, val id: String? = null, val name: String? = null, val argumentsDelta: String? = null) : StreamEvent()
-    data object StreamEnd : StreamEvent()
+    data class ToolCallDelta(
+        val index: Int,
+        val id: String? = null,
+        val name: String? = null,
+        val argumentsDelta: String? = null
+    ) : StreamEvent()
     data class Error(val message: String) : StreamEvent()
+    data object StreamEnd : StreamEvent()
 }

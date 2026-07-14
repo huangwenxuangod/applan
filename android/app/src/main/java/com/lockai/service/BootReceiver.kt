@@ -13,13 +13,16 @@ class BootReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.action
-        Log.d(TAG, "Received action: $action")
-
+        Log.d(TAG, "Received: $action")
         if (action == Intent.ACTION_BOOT_COMPLETED ||
             action == Intent.ACTION_LOCKED_BOOT_COMPLETED) {
-            // 启动保活服务
-            KeepAliveService.start(context)
-            Log.d(TAG, "KeepAliveService started after boot")
+            try {
+                KeepAliveService.start(context)
+                DaemonService.start(context)
+                Log.d(TAG, "Both services started after boot")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to start services on boot", e)
+            }
         }
     }
 }

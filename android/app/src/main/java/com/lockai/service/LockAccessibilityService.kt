@@ -11,11 +11,15 @@ import android.provider.Settings
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import com.lockai.MainActivity
+import com.lockai.util.AppState
 
 /**
- * 无障碍服务 - 双重功能：
- * 1. 执行锁屏操作（GLOBAL_ACTION_LOCK_SCREEN）
- * 2. 检测用户按Home/Recents试图绕过，自动拉回LockAI
+ * 无障碍服务 - AppBlock式全覆盖拦截
+ *
+ * 核心原理：监听所有窗口变化事件
+ * - AI未放行时：检测到任何非白名单App/Launcher/Recents → 立即拉起LockAI全屏覆盖
+ * - 白名单：LockAI自身、系统设置相关（权限引导期间）、系统UI（状态栏等）
+ * - 放行后：不拦截，用户可自由使用手机
  */
 class LockAccessibilityService : AccessibilityService() {
 
@@ -35,46 +39,91 @@ class LockAccessibilityService : AccessibilityService() {
         }
     }
 
-    // 标记：AI是否已放行。放行后不再拦截Home键
-    @Volatile
-    private var isGranted = false
-
-    // 防止无限递归拉起
     @Volatile
     private var isPullingBack = false
 
+    @Volatile
+    private var lastPullTime = 0L
+
     private val handler = Handler(Looper.getMainLooper())
 
-    fun setGranted(granted: Boolean) {
-        isGranted = granted
-        Log.d(TAG, "Granted state changed: $granted")
-    }
+    // 系统白名单包名 - 这些包名的窗口变化不触发拦截
+    private val systemWhitelist = setOf(
+        "android",                    // 系统对话框
+        "com.android.systemui",       // 系统UI（状态栏、导航栏）
+        "com.android.permissioncontroller", // 权限对话框
+        "com.google.android.permissioncontroller",
+    )
+
+    // 设置相关包名 - 只有在设置宽限期内才放行
+    private val settingsPackages = setOf(
+        "com.android.settings",
+        "com.miui.securitycenter",          // MIUI
+        "com.huawei.systemmanager",         // EMUI
+        "com.huawei.android.launcher",
+        "com.coloros.safecenter",           // ColorOS
+        "com.oppo.launcher",
+        "com.vivo.permissionmanager",       // OriginOS
+        "com.bbk.launcher2",
+        "com.samsung.android.lool",         // One UI
+        "com.sec.android.app.launcher",
+        "com.miui.home",                    // MIUI桌面（特殊处理）
+        "com.android.launcher",
+        "com.android.launcher3",
+    )
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
-        isGranted = false
         Log.d(TAG, "Accessibility service connected")
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         event ?: return
-        if (isGranted) return
         if (isPullingBack) return
 
-        when (event.eventType) {
-            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
-                val pkg = event.packageName?.toString() ?: return
-                val cls = event.className?.toString() ?: return
+        // 只处理窗口状态变化
+        if (event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
+            event.eventType != AccessibilityEvent.TYPE_WINDOWS_CHANGED) return
 
-                val isLauncher = isHomePackage(pkg)
-                val isRecents = isRecentsClass(cls)
+        val pkg = event.packageName?.toString() ?: return
 
-                if (isLauncher || isRecents) {
-                    Log.d(TAG, "Escape attempt detected: pkg=$pkg, cls=$cls")
-                    pullBackToLockAI()
-                }
+        // 自己App的事件，不处理
+        if (pkg == packageName) return
+
+        // 系统白名单，不处理
+        if (pkg in systemWhitelist) return
+
+        // 通过AppState判断是否应该拦截
+        val shouldBlock = AppState.shouldBlock()
+        if (!shouldBlock) {
+            // 设置宽限期内的设置包也允许
+            if (AppState.isInSettingsGracePeriod() && isSettingsPackage(pkg)) {
+                return
             }
+            // AI已放行，不拦截任何App
+            if (AppState.isGrantedByAi() || AppState.isGrantedByEmergency()) {
+                return
+            }
+            // 设置宽限期内回到桌面，拉回LockAI（用户从设置返回了）
+            if (AppState.isInSettingsGracePeriod() && isLauncherPackage(pkg)) {
+                Log.d(TAG, "Back from settings to launcher, pulling back")
+                AppState.endSettingsSession()
+                pullBackToLockAI()
+                return
+            }
+        }
+
+        // 未放行状态：检测到任何非白名单包名 → 拦截
+        // 包括Launcher、Recents、任何第三方App
+        if (shouldBlock) {
+            // 防抖：500ms内只拉一次
+            val now = System.currentTimeMillis()
+            if (now - lastPullTime < 500) return
+            lastPullTime = now
+
+            Log.d(TAG, "BLOCKED: $pkg - pulling LockAI to foreground")
+            pullBackToLockAI()
         }
     }
 
@@ -89,10 +138,10 @@ class LockAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * 执行锁屏 - GLOBAL_ACTION_LOCK_SCREEN (API 28+)
+     * 执行锁屏
      */
     fun lockScreen(): Boolean {
-        isGranted = false
+        AppState.resetGrant()
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
             Log.w(TAG, "Lock screen requires API 28+")
             return false
@@ -107,33 +156,44 @@ class LockAccessibilityService : AccessibilityService() {
         }
     }
 
+    /**
+     * 拉起LockAI全屏覆盖 - AppBlock式拦截
+     * 使用FLAG_ACTIVITY_CLEAR_TOP + FLAG_ACTIVITY_SINGLE_TOP确保覆盖在当前App上面
+     */
     private fun pullBackToLockAI() {
         isPullingBack = true
-        try {
-            // 先按Home关闭Recents面板
-            performGlobalAction(GLOBAL_ACTION_HOME)
-        } catch (_: Exception) {}
-        // 延迟150ms后拉起LockAI，避免与系统动画冲突
-        handler.postDelayed({
+        handler.post {
             try {
                 val intent = Intent(this, MainActivity::class.java).apply {
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or
-                            Intent.FLAG_ACTIVITY_CLEAR_TOP or
-                            Intent.FLAG_ACTIVITY_SINGLE_TOP or
-                            Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+                    addFlags(
+                        Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                        Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                        Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
+                        Intent.FLAG_ACTIVITY_NO_ANIMATION
+                    )
                 }
                 startActivity(intent)
             } catch (e: Exception) {
                 Log.e(TAG, "Pull back failed", e)
             }
-        }, 150)
-        // 1.5秒后重置防递归标志
+        }
+        // 防递归锁
         handler.postDelayed({
             isPullingBack = false
-        }, 1500)
+        }, 1000)
     }
 
-    private fun isHomePackage(pkg: String): Boolean {
+    private fun isSettingsPackage(pkg: String): Boolean {
+        if (pkg in settingsPackages) return true
+        return pkg.contains("settings", ignoreCase = true) ||
+               pkg.contains("permission", ignoreCase = true) ||
+               pkg.contains("autostart", ignoreCase = true) ||
+               pkg.contains("safecenter", ignoreCase = true) ||
+               pkg.contains("securitycenter", ignoreCase = true)
+    }
+
+    private fun isLauncherPackage(pkg: String): Boolean {
         val knownLaunchers = setOf(
             "com.miui.home",
             "com.huawei.android.launcher",
@@ -157,12 +217,5 @@ class LockAccessibilityService : AccessibilityService() {
         } catch (_: Exception) {
             false
         }
-    }
-
-    private fun isRecentsClass(cls: String): Boolean {
-        return cls.contains("RecentsActivity", ignoreCase = true) ||
-               cls.contains("RecentTasksActivity", ignoreCase = true) ||
-               cls.contains("OverviewProxyService", ignoreCase = true) ||
-               cls.contains("RecentsAndfs", ignoreCase = true)
     }
 }

@@ -87,6 +87,30 @@
                 android:value="Personal screen monitoring and auto-launch service" />
         </service>
 
+        <!-- 守护服务（双服务互保） -->
+        <service
+            android:name=".service.DaemonService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            tools:targetApi="34">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Daemon watchdog service for app survival" />
+        </service>
+
+        <!-- 设备管理员（防卸载） -->
+        <receiver
+            android:name=".service.AppDeviceAdminReceiver"
+            android:exported="true"
+            android:permission="android.permission.BIND_DEVICE_ADMIN">
+            <meta-data
+                android:name="android.app.device_admin"
+                android:resource="@xml/device_admin" />
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+            </intent-filter>
+        </receiver>
+
         <!-- 无障碍服务（锁屏+检测Home/Recents拉回） -->
         <service
             android:name=".service.LockAccessibilityService"

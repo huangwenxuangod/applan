@@ -3,8 +3,9 @@ package com.lockai
 import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.content.Context
 import android.os.Build
-import com.lockai.service.KeepAliveService
+import com.lockai.util.CrashHandler
 
 class LockAiApp : Application() {
 
@@ -13,39 +14,47 @@ class LockAiApp : Application() {
             private set
     }
 
+    override fun attachBaseContext(base: Context?) {
+        // 使用DeviceProtectedStorage，锁屏状态下也能访问SP
+        // 修复: "SharedPreferences in credential encrypted storage are not available until after user is unlocked"
+        super.attachBaseContext(
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && base != null) {
+                base.createDeviceProtectedStorageContext()
+            } else {
+                base
+            }
+        )
+    }
+
     override fun onCreate() {
         super.onCreate()
         instance = this
+
+        // 初始化全局崩溃处理器（必须最先初始化）
+        CrashHandler.init(this)
+
         createNotificationChannels()
-        // 启动保活服务
-        KeepAliveService.start(this)
     }
 
     private fun createNotificationChannels() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val nm = getSystemService(NotificationManager::class.java)
 
-            val keepAliveChannel = NotificationChannel(
+            val channel = NotificationChannel(
                 CHANNEL_KEEP_ALIVE,
-                getString(R.string.channel_keep_alive),
+                "锁屏保护",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = getString(R.string.channel_keep_alive_desc)
+                description = "AppPlan正在守护你的注意力"
                 setShowBadge(false)
+                enableVibration(false)
+                enableLights(false)
+                setSound(null, null)
             }
 
-            val lockScreenChannel = NotificationChannel(
-                CHANNEL_LOCK_SCREEN,
-                getString(R.string.channel_lock_screen),
-                NotificationManager.IMPORTANCE_HIGH
-            ).apply {
-                description = getString(R.string.channel_lock_screen_desc)
-            }
-
-            nm.createNotificationChannels(listOf(keepAliveChannel, lockScreenChannel))
+            nm.createNotificationChannel(channel)
         }
     }
 }
 
-const val CHANNEL_KEEP_ALIVE = "keep_alive_channel"
-const val CHANNEL_LOCK_SCREEN = "lock_screen_channel"
+const val CHANNEL_KEEP_ALIVE = "appplan_service"

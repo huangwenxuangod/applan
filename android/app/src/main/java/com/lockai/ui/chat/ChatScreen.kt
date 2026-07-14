@@ -60,7 +60,7 @@ fun ChatScreen(
             TopAppBar(
                 title = {
                     Text(
-                        "LockAI",
+                        "AppPlan",
                         fontWeight = FontWeight.Bold,
                         fontSize = 20.sp
                     )

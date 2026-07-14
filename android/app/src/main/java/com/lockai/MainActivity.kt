@@ -1,82 +1,132 @@
 package com.lockai
 
-import android.Manifest
-import android.content.pm.PackageManager
+import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.view.View
+import android.view.WindowInsets
+import android.view.WindowInsetsController
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.core.content.ContextCompat
+import androidx.activity.enableEdgeToEdge
 import androidx.core.view.WindowCompat
+import com.lockai.service.DaemonService
 import com.lockai.service.KeepAliveService
 import com.lockai.ui.LockAIApp
 import com.lockai.ui.needsResetOnResume
 import com.lockai.ui.resetChatConversation
+import com.lockai.util.AppState
 
 class MainActivity : ComponentActivity() {
-
-    private var isFirstCreate = true
-
-    private val notificationPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        KeepAliveService.start(this)
-    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        WindowCompat.setDecorFitsSystemWindows(window, false)
-
-        // 在锁屏上显示 + 自动亮屏
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
-            setShowWhenLocked(true)
-            setTurnScreenOn(true)
-        } else {
-            @Suppress("DEPRECATION")
-            window.addFlags(
-                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+        // 确保窗口在锁屏上显示（在onCreate早期设置，window此时可用）
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                setShowWhenLocked(true)
+                setTurnScreenOn(true)
+            } else {
+                @Suppress("DEPRECATION")
+                window.addFlags(
+                    WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
                     WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
                     WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
-            )
+                )
+            }
+            // 屏幕常亮
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } catch (e: Exception) {
+            // window可能还没准备好，忽略，后面onAttachedToWindow再设
         }
 
-        requestNotificationPermissionIfNeeded()
         KeepAliveService.start(this)
+        DaemonService.start(this)
+        AppState.touch()
 
         setContent {
             LockAIApp(context = this)
         }
+    }
 
-        isFirstCreate = false
+    /**
+     * onAttachedToWindow时window已完全初始化，不会NPE
+     */
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        setupFullscreenImmersive()
+    }
+
+    /**
+     * 设置全屏沉浸模式 - 隐藏状态栏和导航栏，覆盖手势区域
+     * 加空判断兜底，防止window或insetsController为null
+     */
+    private fun setupFullscreenImmersive() {
+        try {
+            val w = window ?: return
+            WindowCompat.setDecorFitsSystemWindows(w, false)
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                val controller = w.insetsController ?: return
+                controller.hide(
+                    WindowInsets.Type.statusBars() or
+                    WindowInsets.Type.navigationBars() or
+                    WindowInsets.Type.systemBars()
+                )
+                controller.systemBarsBehavior =
+                    WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            } else {
+                @Suppress("DEPRECATION")
+                w.decorView?.systemUiVisibility = (
+                    View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                    or View.SYSTEM_UI_FLAG_FULLSCREEN
+                    or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                    or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                    or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                    or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                )
+            }
+        } catch (e: Exception) {
+            // 全屏设置失败不影响App使用
+        }
     }
 
     override fun onResume() {
         super.onResume()
-        KeepAliveService.start(this)
-        // 只有在标记需要重置时才重置（锁屏后解锁、退出后回来、返回桌面后回来）
-        // 从设置页/紧急解锁页返回时不重置
+        AppState.touch()
+        setupFullscreenImmersive()
         if (needsResetOnResume) {
             resetChatConversation()
         }
+        KeepAliveService.start(this)
+        DaemonService.start(this)
     }
 
-    @Deprecated("Deprecated in Java")
+    override fun onPause() {
+        super.onPause()
+        AppState.touch()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) {
+            setupFullscreenImmersive()
+        }
+    }
+
+    @Deprecated("Use OnBackPressedCallback")
     override fun onBackPressed() {
-        // 拦截返回键，回到桌面而不是退出应用
-        moveTaskToBack(true)
+        // 不调用super，BackHandler在Compose中处理
     }
 
-    private fun requestNotificationPermissionIfNeeded() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            val granted = ContextCompat.checkSelfPermission(
-                this, Manifest.permission.POST_NOTIFICATIONS
-            ) == PackageManager.PERMISSION_GRANTED
-            if (!granted) {
-                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-            }
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        AppState.touch()
+        setupFullscreenImmersive()
+        if (needsResetOnResume) {
+            resetChatConversation()
         }
     }
 }

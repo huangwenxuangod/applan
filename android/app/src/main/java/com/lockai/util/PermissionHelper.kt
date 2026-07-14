@@ -1,14 +1,43 @@
 package com.lockai.util
 
+import android.app.admin.DevicePolicyManager
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
+import com.lockai.service.AppDeviceAdminReceiver
 import com.lockai.service.LockAccessibilityService
 
 object PermissionHelper {
+
+    /**
+     * 检查设备管理员是否已启用（防卸载）
+     */
+    fun isDeviceAdminActive(context: Context): Boolean {
+        val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+        val cn = ComponentName(context, AppDeviceAdminReceiver::class.java)
+        return dpm.isAdminActive(cn)
+    }
+
+    /**
+     * 请求设备管理员权限（启用后用户无法直接卸载App）
+     */
+    fun requestDeviceAdmin(context: Context) {
+        val intent = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
+            val cn = ComponentName(context, AppDeviceAdminReceiver::class.java)
+            putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, cn)
+            putExtra(
+                DevicePolicyManager.EXTRA_ADD_EXPLANATION,
+                "启用设备管理员后，AppPlan将无法被直接卸载，防止你意志不坚定时绕开锁屏。\n" +
+                "如需卸载，请先在此页面关闭设备管理员权限。"
+            )
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(intent)
+    }
 
     /**
      * 检查是否有悬浮窗权限

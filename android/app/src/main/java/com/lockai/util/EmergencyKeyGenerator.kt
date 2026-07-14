@@ -3,24 +3,36 @@ package com.lockai.util
 import java.security.SecureRandom
 
 object EmergencyKeyGenerator {
-    private const val KEY_LENGTH = 64
-    // 包含所有键盘字符，去掉空格。故意包含易混淆字符让输入更痛苦。
-    // 大写+小写+数字+特殊符号，总计约86个字符，暴力破解概率 86^-64 ≈ 不可能。
-    private const val CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()_+-=[]{}|;':\",./<>?`~"
+
+    // 8位密钥（测试方便，正式版可改回64位）
+    private const val KEY_LENGTH = 8
+
+    // 丰富字符集：大小写+数字+特殊符号
+    private val CHARS = (
+        ('A'..'Z') + ('a'..'z') + ('0'..'9') +
+        "!@#$%^&*()_+-=[]{}|;':\",./<>?`~".toList()
+    ).toCharArray()
 
     private val random = SecureRandom()
 
+    fun keyLength(): Int = KEY_LENGTH
+
+    /**
+     * 生成随机密钥
+     */
     fun generate(): String {
         val sb = StringBuilder(KEY_LENGTH)
         for (i in 0 until KEY_LENGTH) {
-            sb.append(CHARS[random.nextInt(CHARS.length)])
+            sb.append(CHARS[random.nextInt(CHARS.size)])
         }
         return sb.toString()
     }
 
+    /**
+     * 验证密钥
+     */
     fun verify(input: String, target: String): Boolean {
-        return input.length == KEY_LENGTH && input == target
+        if (input.length != KEY_LENGTH) return false
+        return input == target
     }
-
-    fun keyLength() = KEY_LENGTH
 }

@@ -1,11 +1,13 @@
 package com.lockai.ui.chat
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.lockai.network.ChatMessage
 import com.lockai.network.HermesClient
 import com.lockai.network.StreamEvent
 import com.lockai.network.ToolCall
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -21,15 +23,28 @@ data class ChatUiState(
 
 class ChatViewModel : ViewModel() {
 
+    companion object {
+        private const val TAG = "ChatVM"
+    }
+
     private val _uiState = MutableStateFlow(ChatUiState())
     val uiState: StateFlow<ChatUiState> = _uiState.asStateFlow()
 
-    // 错误事件（一次性消费）
     private val _errorEvent = MutableStateFlow<String?>(null)
     val errorEvent: StateFlow<String?> = _errorEvent.asStateFlow()
 
     private val hermesClient = HermesClient()
     private val messageHistory = mutableListOf<ChatMessage>()
+
+    // 全局协程异常处理器 - 防止任何未捕获异常崩溃App
+    private val exceptionHandler = CoroutineExceptionHandler { _, e ->
+        Log.e(TAG, "Coroutine error", e)
+        _errorEvent.value = "连接出错: ${e.message ?: "未知错误"}"
+        _uiState.value = _uiState.value.copy(
+            isStreaming = false,
+            isConnecting = false
+        )
+    }
 
     fun updateConfig(serverUrl: String, apiKey: String) {
         hermesClient.updateConfig(serverUrl, apiKey)
@@ -37,10 +52,6 @@ class ChatViewModel : ViewModel() {
 
     fun isConfigured(): Boolean = hermesClient.isConfigured()
 
-    /**
-     * 重置对话 - 每次解锁/回到前台时调用，开始新一轮审问
-     * 服务器端MEMORY.md会保留跨会话记忆（漏洞记录等）
-     */
     fun resetConversation() {
         messageHistory.clear()
         _uiState.value = ChatUiState(showGreeting = true)
@@ -63,7 +74,7 @@ class ChatViewModel : ViewModel() {
             showGreeting = false
         )
 
-        viewModelScope.launch {
+        viewModelScope.launch(exceptionHandler) {
             runChatLoop(onLockScreen, onExitApp)
         }
     }
@@ -78,98 +89,107 @@ class ChatViewModel : ViewModel() {
             var fullReply = StringBuilder()
             val toolCalls = mutableMapOf<Int, ToolCall>()
 
-            hermesClient.chatStream(messageHistory.toList()).collect { event ->
-                when (event) {
-                    is StreamEvent.Content -> {
-                        fullReply.append(event.text)
-                        _uiState.value = _uiState.value.copy(
-                            currentReply = fullReply.toString(),
-                            isConnecting = false
-                        )
-                    }
-                    is StreamEvent.ToolCallDelta -> {
-                        val existing = toolCalls.getOrPut(event.index) { ToolCall() }
-                        event.id?.let { existing.id = it }
-                        event.name?.let { existing.name = it }
-                        event.argumentsDelta?.let { existing.arguments.append(it) }
-                    }
-                    is StreamEvent.StreamEnd -> {
-                        val replyText = fullReply.toString()
-                        val calls = toolCalls.values.toList()
-
-                        if (calls.isNotEmpty()) {
-                            messageHistory.add(
-                                ChatMessage("assistant", replyText, toolCalls = calls.toMutableList())
+            try {
+                hermesClient.chatStream(messageHistory.toList()).collect { event ->
+                    when (event) {
+                        is StreamEvent.Content -> {
+                            fullReply.append(event.text)
+                            _uiState.value = _uiState.value.copy(
+                                currentReply = fullReply.toString(),
+                                isConnecting = false
                             )
+                        }
+                        is StreamEvent.ToolCallDelta -> {
+                            val existing = toolCalls.getOrPut(event.index) { ToolCall() }
+                            event.id?.let { existing.id = it }
+                            event.name?.let { existing.name = it }
+                            event.argumentsDelta?.let { existing.arguments.append(it) }
+                        }
+                        is StreamEvent.StreamEnd -> {
+                            val replyText = fullReply.toString()
+                            val calls = toolCalls.values.toList()
 
-                            var hasContinue = false
-                            var shouldExit = false
-                            var shouldLock = false
+                            if (calls.isNotEmpty()) {
+                                messageHistory.add(
+                                    ChatMessage("assistant", replyText, toolCalls = calls.toMutableList())
+                                )
 
-                            for (tc in calls) {
-                                when (tc.name) {
-                                    "lock_screen" -> {
-                                        shouldLock = true
-                                        messageHistory.add(
-                                            ChatMessage(
-                                                "tool",
-                                                """{"success": true, "message": "屏幕已锁定"}""",
-                                                toolCallId = tc.id
+                                var hasContinue = false
+                                var shouldExit = false
+                                var shouldLock = false
+
+                                for (tc in calls) {
+                                    when (tc.name) {
+                                        "lock_screen" -> {
+                                            shouldLock = true
+                                            messageHistory.add(
+                                                ChatMessage(
+                                                    "tool",
+                                                    """{"success": true, "message": "屏幕已锁定"}""",
+                                                    toolCallId = tc.id
+                                                )
                                             )
-                                        )
-                                    }
-                                    "exit_app" -> {
-                                        shouldExit = true
-                                        messageHistory.add(
-                                            ChatMessage(
-                                                "tool",
-                                                """{"success": true, "message": "已放行"}""",
-                                                toolCallId = tc.id
+                                        }
+                                        "exit_app" -> {
+                                            shouldExit = true
+                                            messageHistory.add(
+                                                ChatMessage(
+                                                    "tool",
+                                                    """{"success": true, "message": "已放行"}""",
+                                                    toolCallId = tc.id
+                                                )
                                             )
-                                        )
-                                    }
-                                    else -> {
-                                        hasContinue = true
-                                        messageHistory.add(
-                                            ChatMessage(
-                                                "tool",
-                                                """{"error": "Unknown tool: ${tc.name}"}""",
-                                                toolCallId = tc.id
+                                        }
+                                        else -> {
+                                            hasContinue = true
+                                            messageHistory.add(
+                                                ChatMessage(
+                                                    "tool",
+                                                    """{"error": "Unknown tool: ${tc.name}"}""",
+                                                    toolCallId = tc.id
+                                                )
                                             )
-                                        )
+                                        }
                                     }
                                 }
-                            }
 
-                            if (shouldExit) {
-                                _uiState.value = _uiState.value.copy(
-                                    currentReply = replyText,
-                                    messages = messageHistory.toList(),
-                                    isStreaming = false,
-                                    isConnecting = false
-                                )
-                                kotlinx.coroutines.delay(400)
-                                onExitApp()
-                                return@collect
-                            }
+                                if (shouldExit) {
+                                    _uiState.value = _uiState.value.copy(
+                                        currentReply = replyText,
+                                        messages = messageHistory.toList(),
+                                        isStreaming = false,
+                                        isConnecting = false
+                                    )
+                                    kotlinx.coroutines.delay(400)
+                                    onExitApp()
+                                    return@collect
+                                }
 
-                            if (shouldLock) {
-                                _uiState.value = _uiState.value.copy(
-                                    currentReply = replyText,
-                                    messages = messageHistory.toList(),
-                                    isStreaming = false,
-                                    isConnecting = false
-                                )
-                                // 等待800ms让用户看到AI的回复，再执行锁屏
-                                kotlinx.coroutines.delay(800)
-                                onLockScreen()
-                                return@collect
-                            }
+                                if (shouldLock) {
+                                    _uiState.value = _uiState.value.copy(
+                                        currentReply = replyText,
+                                        messages = messageHistory.toList(),
+                                        isStreaming = false,
+                                        isConnecting = false
+                                    )
+                                    kotlinx.coroutines.delay(800)
+                                    onLockScreen()
+                                    return@collect
+                                }
 
-                            if (hasContinue) {
-                                shouldLoop = true
-                                _uiState.value = _uiState.value.copy(currentReply = "")
+                                if (hasContinue) {
+                                    shouldLoop = true
+                                    _uiState.value = _uiState.value.copy(currentReply = "")
+                                } else {
+                                    _uiState.value = _uiState.value.copy(
+                                        messages = messageHistory.toList(),
+                                        currentReply = "",
+                                        isStreaming = false,
+                                        isConnecting = false
+                                    )
+                                }
                             } else {
+                                messageHistory.add(ChatMessage("assistant", replyText))
                                 _uiState.value = _uiState.value.copy(
                                     messages = messageHistory.toList(),
                                     currentReply = "",
@@ -177,24 +197,23 @@ class ChatViewModel : ViewModel() {
                                     isConnecting = false
                                 )
                             }
-                        } else {
-                            messageHistory.add(ChatMessage("assistant", replyText))
+                        }
+                        is StreamEvent.Error -> {
+                            _errorEvent.value = event.message
                             _uiState.value = _uiState.value.copy(
-                                messages = messageHistory.toList(),
-                                currentReply = "",
                                 isStreaming = false,
                                 isConnecting = false
                             )
                         }
                     }
-                    is StreamEvent.Error -> {
-                        _errorEvent.value = event.message
-                        _uiState.value = _uiState.value.copy(
-                            isStreaming = false,
-                            isConnecting = false
-                        )
-                    }
                 }
+            } catch (e: Exception) {
+                Log.e(TAG, "Chat loop error", e)
+                _errorEvent.value = "连接出错: ${e.message ?: "网络异常"}"
+                _uiState.value = _uiState.value.copy(
+                    isStreaming = false,
+                    isConnecting = false
+                )
             }
         }
     }

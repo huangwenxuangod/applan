@@ -16,6 +16,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.lockai.R
+import com.lockai.util.AppState
 import com.lockai.util.AppUpdateManager
 import com.lockai.util.AutoStartHelper
 import com.lockai.util.PermissionHelper
@@ -26,6 +27,7 @@ import kotlinx.coroutines.isActive
 @Composable
 fun SettingsScreen(
     onBack: () -> Unit,
+    onBeforeOpenSettings: () -> Unit = {},
     onEmergencyUnlock: () -> Unit = {},
     onCheckUpdate: () -> Unit = {}
 ) {
@@ -60,6 +62,13 @@ fun SettingsScreen(
             delay(800)
             refreshKey++
         }
+    }
+
+    // 跳系统设置的安全包装：先开宽限期再跳转
+    fun openSettings(action: () -> Unit) {
+        onBeforeOpenSettings()
+        AppState.startSettingsSession()
+        action()
     }
 
     Scaffold(
@@ -103,7 +112,9 @@ fun SettingsScreen(
                             title = "自启动",
                             desc = "开机/解锁自动启动，需在厂商设置开启",
                             checked = false,
-                            onCheckedChange = { AutoStartHelper.jumpToAutoStartSetting(context) },
+                            onCheckedChange = {
+                                openSettings { AutoStartHelper.jumpToAutoStartSetting(context) }
+                            },
                             showSwitch = false
                         )
                         HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
@@ -111,28 +122,36 @@ fun SettingsScreen(
                             title = "电池优化白名单",
                             desc = "防止系统杀死后台服务",
                             checked = batteryGranted,
-                            onCheckedChange = { PermissionHelper.requestBatteryOptimization(context) }
+                            onCheckedChange = {
+                                openSettings { PermissionHelper.requestBatteryOptimization(context) }
+                            }
                         )
                         HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
                         ToggleItem(
                             title = "锁屏服务（无障碍）",
                             desc = "AI判断后执行锁屏+拦截Home键",
                             checked = accessibilityGranted,
-                            onCheckedChange = { PermissionHelper.jumpToAccessibilitySettings(context) }
+                            onCheckedChange = {
+                                openSettings { PermissionHelper.jumpToAccessibilitySettings(context) }
+                            }
                         )
                         HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
                         ToggleItem(
                             title = "悬浮窗权限",
                             desc = "在锁屏上显示界面",
                             checked = overlayGranted,
-                            onCheckedChange = { PermissionHelper.jumpToOverlaySettings(context) }
+                            onCheckedChange = {
+                                openSettings { PermissionHelper.jumpToOverlaySettings(context) }
+                            }
                         )
                         HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
                         ToggleItem(
                             title = "通知",
                             desc = "显示运行状态通知",
                             checked = notificationGranted,
-                            onCheckedChange = { PermissionHelper.jumpToNotificationSettings(context) }
+                            onCheckedChange = {
+                                openSettings { PermissionHelper.jumpToNotificationSettings(context) }
+                            }
                         )
                     }
                 }
@@ -150,8 +169,10 @@ fun SettingsScreen(
                     Column {
                         NavItem(
                             title = "设为默认桌面",
-                            desc = if (isDefaultLauncher) "已设为默认桌面 ✓" else "按Home键自动回到LockAI，最稳定防杀",
-                            onClick = { PermissionHelper.requestDefaultLauncher(context) }
+                            desc = if (isDefaultLauncher) "已设为默认桌面 ✓" else "按Home键自动回到AppPlan，最稳定防杀",
+                            onClick = {
+                                openSettings { PermissionHelper.requestDefaultLauncher(context) }
+                            }
                         )
                     }
                 }
@@ -195,7 +216,7 @@ fun SettingsScreen(
                         HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
                         Column(modifier = Modifier.padding(16.dp)) {
                             Text(
-                                "LockAI",
+                                "AppPlan",
                                 fontSize = 18.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onSurface

@@ -18,6 +18,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import com.lockai.util.AppState
 import com.lockai.util.AutoStartHelper
 import com.lockai.util.PermissionHelper
 import kotlinx.coroutines.delay
@@ -43,6 +44,11 @@ fun OnboardingScreen(
 
     fun refresh() { refreshKey++ }
 
+    fun openSettings(action: () -> Unit) {
+        AppState.startSettingsSession()
+        action()
+    }
+
     val permissions = remember(refreshKey, autostartConfirmed) {
         listOf(
             PermissionItem(
@@ -56,15 +62,15 @@ fun OnboardingScreen(
                             PackageManager.PERMISSION_GRANTED
                     } else true
                 },
-                request = { PermissionHelper.jumpToNotificationSettings(context) }
+                request = { openSettings { PermissionHelper.jumpToNotificationSettings(context) } }
             ),
             PermissionItem(
                 id = "battery",
                 title = "电池优化白名单",
-                desc = "防止系统杀死LockAI后台服务，必须开启",
+                desc = "防止系统杀死AppPlan后台服务，必须开启",
                 icon = "🔋",
                 isGranted = { PermissionHelper.isIgnoringBatteryOptimizations(context) },
-                request = { PermissionHelper.requestBatteryOptimization(context) }
+                request = { openSettings { PermissionHelper.requestBatteryOptimization(context) } }
             ),
             PermissionItem(
                 id = "accessibility",
@@ -72,7 +78,7 @@ fun OnboardingScreen(
                 desc = "AI判断你在找借口时执行锁屏，必须开启",
                 icon = "🔒",
                 isGranted = { PermissionHelper.isAccessibilityEnabled(context) },
-                request = { PermissionHelper.jumpToAccessibilitySettings(context) }
+                request = { openSettings { PermissionHelper.jumpToAccessibilitySettings(context) } }
             ),
             PermissionItem(
                 id = "autostart",
@@ -80,7 +86,7 @@ fun OnboardingScreen(
                 desc = "开机自启+解锁弹出，需要在厂商设置中手动开启后勾选确认",
                 icon = "🚀",
                 isGranted = { autostartConfirmed },
-                request = { AutoStartHelper.jumpToAutoStartSetting(context) },
+                request = { openSettings { AutoStartHelper.jumpToAutoStartSetting(context) } },
                 canDetect = false
             ),
             PermissionItem(
@@ -89,15 +95,15 @@ fun OnboardingScreen(
                 desc = "在锁屏上显示界面，推荐开启",
                 icon = "🪟",
                 isGranted = { PermissionHelper.canDrawOverlays(context) },
-                request = { PermissionHelper.jumpToOverlaySettings(context) }
+                request = { openSettings { PermissionHelper.jumpToOverlaySettings(context) } }
             ),
             PermissionItem(
                 id = "launcher",
                 title = "设为默认桌面（推荐）",
-                desc = "按Home键自动回到LockAI，最稳定可靠",
+                desc = "按Home键自动回到AppPlan，最稳定可靠",
                 icon = "🏠",
                 isGranted = { PermissionHelper.isDefaultLauncher(context) },
-                request = { PermissionHelper.requestDefaultLauncher(context) }
+                request = { openSettings { PermissionHelper.requestDefaultLauncher(context) } }
             )
         )
     }
@@ -125,7 +131,7 @@ fun OnboardingScreen(
             Spacer(modifier = Modifier.height(24.dp))
 
             Text(
-                "🔒 LockAI",
+                "🔒 AppPlan",
                 fontSize = 32.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary
