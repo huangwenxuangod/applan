@@ -16,6 +16,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.lockai.R
+import com.lockai.util.AppUpdateManager
 import com.lockai.util.AutoStartHelper
 import com.lockai.util.PermissionHelper
 import kotlinx.coroutines.delay
@@ -25,11 +26,13 @@ import kotlinx.coroutines.isActive
 @Composable
 fun SettingsScreen(
     onBack: () -> Unit,
-    onEmergencyUnlock: () -> Unit = {}
+    onEmergencyUnlock: () -> Unit = {},
+    onCheckUpdate: () -> Unit = {}
 ) {
     val context = LocalContext.current
 
     var refreshKey by remember { mutableStateOf(0) }
+    val versionName = remember { AppUpdateManager.getCurrentVersionName(context) }
 
     val batteryGranted by remember(refreshKey) {
         derivedStateOf { PermissionHelper.isIgnoringBatteryOptimizations(context) }
@@ -52,7 +55,6 @@ fun SettingsScreen(
         derivedStateOf { PermissionHelper.isDefaultLauncher(context) }
     }
 
-    // 自动刷新权限状态
     LaunchedEffect(Unit) {
         while (isActive) {
             delay(800)
@@ -99,7 +101,7 @@ fun SettingsScreen(
                     Column {
                         ToggleItem(
                             title = "自启动",
-                            desc = "开机/解锁自动启动",
+                            desc = "开机/解锁自动启动，需在厂商设置开启",
                             checked = false,
                             onCheckedChange = { AutoStartHelper.jumpToAutoStartSetting(context) },
                             showSwitch = false
@@ -107,14 +109,14 @@ fun SettingsScreen(
                         HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
                         ToggleItem(
                             title = "电池优化白名单",
-                            desc = "防止系统杀死服务",
+                            desc = "防止系统杀死后台服务",
                             checked = batteryGranted,
                             onCheckedChange = { PermissionHelper.requestBatteryOptimization(context) }
                         )
                         HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
                         ToggleItem(
                             title = "锁屏服务（无障碍）",
-                            desc = "AI判断后执行锁屏",
+                            desc = "AI判断后执行锁屏+拦截Home键",
                             checked = accessibilityGranted,
                             onCheckedChange = { PermissionHelper.jumpToAccessibilitySettings(context) }
                         )
@@ -148,7 +150,7 @@ fun SettingsScreen(
                     Column {
                         NavItem(
                             title = "设为默认桌面",
-                            desc = if (isDefaultLauncher) "已设为默认桌面" else "按Home键自动回到LockAI，最稳定",
+                            desc = if (isDefaultLauncher) "已设为默认桌面 ✓" else "按Home键自动回到LockAI，最稳定防杀",
                             onClick = { PermissionHelper.requestDefaultLauncher(context) }
                         )
                     }
@@ -184,26 +186,28 @@ fun SettingsScreen(
                     shape = RoundedCornerShape(14.dp),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
                 ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(
-                            "LockAI",
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
+                    Column {
+                        NavItem(
+                            title = "检查更新",
+                            desc = "当前版本 v$versionName",
+                            onClick = onCheckUpdate
                         )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            "v1.0.0",
-                            fontSize = 14.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            "手机第一道防线。\nAI守门人，专治玩手机找借口。",
-                            fontSize = 13.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            lineHeight = 20.sp
-                        )
+                        HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text(
+                                "LockAI",
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                "手机第一道防线。\nAI守门人，专治玩手机找借口。",
+                                fontSize = 13.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                lineHeight = 20.sp
+                            )
+                        }
                     }
                 }
             }

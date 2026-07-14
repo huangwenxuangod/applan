@@ -20,14 +20,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.lockai.R
 import com.lockai.network.ChatMessage
-import com.lockai.service.LockAccessibilityService
-import com.lockai.ui.markNeedsReset
 import kotlinx.coroutines.isActive
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatScreen(
     viewModel: ChatViewModel,
+    onLockScreen: () -> Unit = {},
+    onExitApp: () -> Unit = {},
     onSettingsClick: () -> Unit,
     onEmergencyUnlock: () -> Unit = {}
 ) {
@@ -126,16 +126,8 @@ fun ChatScreen(
                                 inputText = ""
                                 viewModel.sendMessage(
                                     text = text,
-                                    onLockScreen = {
-                                        markNeedsReset()
-                                        LockAccessibilityService.getInstance()?.lockScreen()
-                                    },
-                                    onExitApp = {
-                                        markNeedsReset()
-                                        (context as? android.app.Activity)?.let { activity ->
-                                            activity.moveTaskToBack(true)
-                                        }
-                                    }
+                                    onLockScreen = onLockScreen,
+                                    onExitApp = onExitApp
                                 )
                             }
                         },

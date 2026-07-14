@@ -11,8 +11,8 @@ android {
         applicationId = "com.lockai"
         minSdk = 24
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.1.0"
 
         // === 服务器配置（在这里修改，不需要在APP内设置）===
         buildConfigField("String", "SERVER_URL", "\"http://129.204.200.38:8787\"")

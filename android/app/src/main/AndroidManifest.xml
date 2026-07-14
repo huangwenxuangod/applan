@@ -28,6 +28,12 @@
     <!-- 禁用锁屏（旧版兼容） -->
     <uses-permission android:name="android.permission.DISABLE_KEYGUARD" />
 
+    <!-- APK安装 -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
+    <!-- 精确闹钟（Android 12+ 用于服务重启） -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+
     <application
         android:name=".LockAiApp"
         android:allowBackup="false"
@@ -39,13 +45,15 @@
         android:usesCleartextTraffic="true"
         tools:targetApi="35">
 
-        <!-- 主Activity -->
+        <!-- 主Activity - 不出现在最近任务列表，无法被划掉 -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTask"
             android:stateNotNeeded="true"
-            android:excludeFromRecents="false"
+            android:excludeFromRecents="true"
+            android:finishOnTaskLaunch="false"
+            android:alwaysRetainTaskState="true"
             android:showWhenLocked="true"
             android:turnScreenOn="true"
             android:windowSoftInputMode="adjustResize">
@@ -79,7 +87,7 @@
                 android:value="Personal screen monitoring and auto-launch service" />
         </service>
 
-        <!-- 无障碍服务（锁屏） -->
+        <!-- 无障碍服务（锁屏+检测Home/Recents拉回） -->
         <service
             android:name=".service.LockAccessibilityService"
             android:exported="true"
@@ -91,6 +99,17 @@
                 android:name="android.accessibilityservice"
                 android:resource="@xml/accessibility_service_config" />
         </service>
+
+        <!-- FileProvider用于APK安装 -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
 
     </application>
 
