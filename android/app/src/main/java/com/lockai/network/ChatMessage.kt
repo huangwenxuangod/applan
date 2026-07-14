@@ -1,6 +1,9 @@
 package com.lockai.network
 
+import java.util.UUID
+
 data class ChatMessage(
+    val id: String = UUID.randomUUID().toString(),
     val role: String,
     val content: String,
     val toolCallId: String? = null,

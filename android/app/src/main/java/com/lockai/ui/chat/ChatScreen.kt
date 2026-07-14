@@ -1,6 +1,7 @@
 package com.lockai.ui.chat
 
 import android.widget.Toast
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -45,12 +46,16 @@ fun ChatScreen(
         }
     }
 
-    // 自动滚动到底部
+    // 自动滚动到底部（流式输出时，仅当用户在底部附近时）
+    // 修复：不用animateScrollToItem（每token触发动画导致卡顿），改用scrollToItem
     LaunchedEffect(uiState.messages.size, uiState.currentReply) {
-        if (uiState.messages.isNotEmpty() || uiState.currentReply.isNotEmpty()) {
-            listState.animateScrollToItem(
-                (uiState.messages.size + if (uiState.currentReply.isNotEmpty()) 1 else 0).coerceAtLeast(0)
-            )
+        val totalItems = uiState.messages.size + if (uiState.currentReply.isNotEmpty()) 1 else 0
+        if (totalItems > 0) {
+            val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+            val isNearBottom = lastVisible >= totalItems - 3
+            if (isNearBottom) {
+                listState.scrollToItem(totalItems - 1)
+            }
         }
     }
 
@@ -185,15 +190,20 @@ fun ChatScreen(
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    items(uiState.messages) { msg ->
+                    // 修复：给每个message加key，避免不必要的recomposition
+                    items(
+                        items = uiState.messages,
+                        key = { msg -> msg.id }
+                    ) { msg ->
                         when (msg.role) {
                             "user" -> UserBubble(text = msg.content)
                             "assistant" -> AiBubble(text = msg.content)
+                            "tool" -> {} // tool消息不显示
                         }
                     }
 
                     if (uiState.currentReply.isNotEmpty()) {
-                        item {
+                        item(key = "streaming_reply") {
                             AiBubble(
                                 text = uiState.currentReply,
                                 isStreaming = true
@@ -202,7 +212,7 @@ fun ChatScreen(
                     }
 
                     if (uiState.isConnecting && uiState.currentReply.isEmpty()) {
-                        item {
+                        item(key = "loading") {
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -241,7 +251,7 @@ fun ChatScreen(
 @Composable
 fun UserBubble(text: String) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxSize(),
         horizontalArrangement = Arrangement.End
     ) {
         Surface(
@@ -260,6 +270,9 @@ fun UserBubble(text: String) {
     }
 }
 
+/**
+ * AiBubble - 用remember稳定text引用，减少不必要重组
+ */
 @Composable
 fun AiBubble(text: String, isStreaming: Boolean = false) {
     Row(
@@ -282,6 +295,7 @@ fun AiBubble(text: String, isStreaming: Boolean = false) {
             modifier = Modifier.widthIn(max = 280.dp)
         ) {
             Row(modifier = Modifier.padding(12.dp)) {
+                // 用key确保text变化时只重组Text部分
                 Text(
                     text = text,
                     color = MaterialTheme.colorScheme.onSurface,
@@ -296,18 +310,26 @@ fun AiBubble(text: String, isStreaming: Boolean = false) {
     }
 }
 
+/**
+ * 独立的闪烁光标组件，避免触发父级重组
+ */
 @Composable
-fun BlinkingCursor() {
+private fun BlinkingCursor() {
     var visible by remember { mutableStateOf(true) }
     LaunchedEffect(Unit) {
         while (isActive) {
             visible = !visible
-            kotlinx.coroutines.delay(500)
+            kotlinx.coroutines.delay(530)
         }
     }
+    // 用animateFloatAsState让透明度平滑变化，避免硬闪烁
+    val alpha by animateFloatAsState(
+        targetValue = if (visible) 1f else 0f,
+        label = "cursor"
+    )
     Text(
-        text = if (visible) "|" else " ",
-        color = MaterialTheme.colorScheme.primary,
+        text = "|",
+        color = MaterialTheme.colorScheme.primary.copy(alpha = alpha),
         fontSize = 15.sp
     )
 }

@@ -6,6 +6,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -13,15 +17,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.lockai.R
+import com.lockai.util.AppConfig
 import com.lockai.util.AppState
 import com.lockai.util.AppUpdateManager
 import com.lockai.util.AutoStartHelper
 import com.lockai.util.PermissionHelper
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -29,9 +36,11 @@ fun SettingsScreen(
     onBack: () -> Unit,
     onBeforeOpenSettings: () -> Unit = {},
     onEmergencyUnlock: () -> Unit = {},
-    onCheckUpdate: () -> Unit = {}
+    onCheckUpdate: () -> Unit = {},
+    onConfigSaved: (serverUrl: String, apiKey: String) -> Unit = { _, _ -> }
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
 
     var refreshKey by remember { mutableStateOf(0) }
     val versionName = remember { AppUpdateManager.getCurrentVersionName(context) }
@@ -57,6 +66,11 @@ fun SettingsScreen(
         derivedStateOf { PermissionHelper.isDefaultLauncher(context) }
     }
 
+    // 服务器配置状态
+    var serverUrlInput by remember { mutableStateOf(AppConfig.getServerUrl()) }
+    var apiKeyInput by remember { mutableStateOf(AppConfig.getApiKey()) }
+    var showConfigSaved by remember { mutableStateOf(false) }
+
     LaunchedEffect(Unit) {
         while (isActive) {
             delay(800)
@@ -69,6 +83,17 @@ fun SettingsScreen(
         onBeforeOpenSettings()
         AppState.startSettingsSession()
         action()
+    }
+
+    fun saveConfig() {
+        AppConfig.saveServerUrl(serverUrlInput)
+        AppConfig.saveApiKey(apiKeyInput)
+        onConfigSaved(serverUrlInput.trimEnd('/'), apiKeyInput.trim())
+        showConfigSaved = true
+        scope.launch {
+            delay(1500)
+            showConfigSaved = false
+        }
     }
 
     Scaffold(
@@ -89,7 +114,17 @@ fun SettingsScreen(
                 )
             )
         },
-        containerColor = MaterialTheme.colorScheme.background
+        containerColor = MaterialTheme.colorScheme.background,
+        snackbarHost = {
+            if (showConfigSaved) {
+                Snackbar(
+                    modifier = Modifier.padding(16.dp),
+                    containerColor = MaterialTheme.colorScheme.primary
+                ) {
+                    Text("配置已保存 ✓")
+                }
+            }
+        }
     ) { padding ->
         LazyColumn(
             modifier = Modifier
@@ -98,6 +133,90 @@ fun SettingsScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
+            // 服务器配置
+            item {
+                SectionTitle("服务器配置")
+                Spacer(modifier = Modifier.height(8.dp))
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        OutlinedTextField(
+                            value = serverUrlInput,
+                            onValueChange = { serverUrlInput = it },
+                            label = { Text("Hermes Agent 地址") },
+                            placeholder = { Text("http://192.168.x.x:8787") },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                            leadingIcon = {
+                                Icon(
+                                    painter = painterResource(R.drawable.ic_settings),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(20.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        OutlinedTextField(
+                            value = apiKeyInput,
+                            onValueChange = { apiKeyInput = it },
+                            label = { Text("API Key（可选）") },
+                            placeholder = { Text("留空则不使用") },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            singleLine = true,
+                            leadingIcon = {
+                                Icon(
+                                    painter = painterResource(R.drawable.ic_lock),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(20.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = {
+                                    serverUrlInput = AppConfig.getServerUrl()
+                                    apiKeyInput = AppConfig.getApiKey()
+                                },
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("重置")
+                            }
+                            Button(
+                                onClick = { saveConfig() },
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("保存")
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            "提示：同一WiFi下填电脑局域网IP，如 http://192.168.1.100:8787",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            lineHeight = 18.sp
+                        )
+                    }
+                }
+            }
+
             // 必要权限
             item {
                 SectionTitle("权限管理")
@@ -110,7 +229,7 @@ fun SettingsScreen(
                     Column {
                         ToggleItem(
                             title = "自启动",
-                            desc = "开机/解锁自动启动，需在厂商设置开启",
+                            desc = "开机/解锁自动启动，需在厂商设置开启（在列表中找「AppPlan」）",
                             checked = false,
                             onCheckedChange = {
                                 openSettings { AutoStartHelper.jumpToAutoStartSetting(context) }
@@ -190,7 +309,7 @@ fun SettingsScreen(
                     )
                 ) {
                     NavItem(
-                        title = "紧急解锁（64位密钥）",
+                        title = "紧急解锁（8位密钥）",
                         desc = "AI无法判断时的硬保底，每次随机生成",
                         onClick = onEmergencyUnlock,
                         titleColor = MaterialTheme.colorScheme.error

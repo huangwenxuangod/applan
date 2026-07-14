@@ -16,6 +16,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.lockai.BuildConfig
+import com.lockai.network.HermesClient
 import com.lockai.service.KeepAliveService
 import com.lockai.service.LockAccessibilityService
 import com.lockai.ui.chat.ChatScreen
@@ -24,6 +25,7 @@ import com.lockai.ui.emergency.EmergencyUnlockScreen
 import com.lockai.ui.onboarding.OnboardingScreen
 import com.lockai.ui.settings.SettingsScreen
 import com.lockai.ui.theme.LockAITheme
+import com.lockai.util.AppConfig
 import com.lockai.util.AppState
 import com.lockai.util.AppUpdateManager
 import com.lockai.util.CrashHandler
@@ -78,15 +80,22 @@ fun LockAIApp(context: Context) {
             mutableStateOf(prefs.getBoolean(KEY_ONBOARDED, false))
         }
 
-        val serverUrl = BuildConfig.SERVER_URL
-        val apiKey = BuildConfig.API_KEY
+        // 从AppConfig加载服务器配置
+        val serverUrl = AppConfig.getServerUrl()
+        val apiKey = AppConfig.getApiKey()
+
+        val chatViewModel: ChatViewModel = viewModel()
+
+        // 初始化HermesClient配置
+        LaunchedEffect(Unit) {
+            chatViewModel.updateConfig(serverUrl, apiKey)
+        }
 
         var currentScreen by remember {
             mutableStateOf<Screen>(if (hasOnboarded) Screen.Chat else Screen.Onboarding)
         }
         var showUpdateDialog by remember { mutableStateOf<AppUpdateManager.UpdateInfo?>(null) }
         var crashReport by remember { mutableStateOf<String?>(null) }
-        val chatViewModel: ChatViewModel = viewModel()
 
         // 检查上次崩溃记录
         LaunchedEffect(Unit) {
@@ -296,6 +305,9 @@ fun LockAIApp(context: Context) {
                                     showTopToast(context, "当前已是最新版本 v${BuildConfig.VERSION_NAME}")
                                 }
                             }
+                        },
+                        onConfigSaved = { url, key ->
+                            chatViewModel.updateConfig(url, key)
                         }
                     )
                     is Screen.EmergencyUnlock -> EmergencyUnlockScreen(

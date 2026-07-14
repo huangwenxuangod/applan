@@ -16,12 +16,16 @@ import com.lockai.service.KeepAliveService
 import com.lockai.ui.LockAIApp
 import com.lockai.ui.needsResetOnResume
 import com.lockai.ui.resetChatConversation
+import com.lockai.util.AppConfig
 import com.lockai.util.AppState
 
 class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // 初始化AppConfig（DeviceProtectedStorage，锁屏可访问）
+        AppConfig.init(this)
 
         // 确保窗口在锁屏上显示（在onCreate早期设置，window此时可用）
         try {

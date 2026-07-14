@@ -65,7 +65,7 @@ class ChatViewModel : ViewModel() {
         if (_uiState.value.isStreaming) return
         if (text.isBlank()) return
 
-        messageHistory.add(ChatMessage("user", text))
+        messageHistory.add(ChatMessage(role = "user", content = text))
         _uiState.value = _uiState.value.copy(
             messages = messageHistory.toList(),
             currentReply = "",
@@ -111,7 +111,11 @@ class ChatViewModel : ViewModel() {
 
                             if (calls.isNotEmpty()) {
                                 messageHistory.add(
-                                    ChatMessage("assistant", replyText, toolCalls = calls.toMutableList())
+                                    ChatMessage(
+                                        role = "assistant",
+                                        content = replyText,
+                                        toolCalls = calls.toMutableList()
+                                    )
                                 )
 
                                 var hasContinue = false
@@ -124,8 +128,8 @@ class ChatViewModel : ViewModel() {
                                             shouldLock = true
                                             messageHistory.add(
                                                 ChatMessage(
-                                                    "tool",
-                                                    """{"success": true, "message": "屏幕已锁定"}""",
+                                                    role = "tool",
+                                                    content = """{"success": true, "message": "屏幕已锁定"}""",
                                                     toolCallId = tc.id
                                                 )
                                             )
@@ -134,8 +138,8 @@ class ChatViewModel : ViewModel() {
                                             shouldExit = true
                                             messageHistory.add(
                                                 ChatMessage(
-                                                    "tool",
-                                                    """{"success": true, "message": "已放行"}""",
+                                                    role = "tool",
+                                                    content = """{"success": true, "message": "已放行"}""",
                                                     toolCallId = tc.id
                                                 )
                                             )
@@ -144,8 +148,8 @@ class ChatViewModel : ViewModel() {
                                             hasContinue = true
                                             messageHistory.add(
                                                 ChatMessage(
-                                                    "tool",
-                                                    """{"error": "Unknown tool: ${tc.name}"}""",
+                                                    role = "tool",
+                                                    content = """{"error": "Unknown tool: ${tc.name}"}""",
                                                     toolCallId = tc.id
                                                 )
                                             )
@@ -189,7 +193,7 @@ class ChatViewModel : ViewModel() {
                                     )
                                 }
                             } else {
-                                messageHistory.add(ChatMessage("assistant", replyText))
+                                messageHistory.add(ChatMessage(role = "assistant", content = replyText))
                                 _uiState.value = _uiState.value.copy(
                                     messages = messageHistory.toList(),
                                     currentReply = "",
