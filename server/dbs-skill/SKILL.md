@@ -2,7 +2,7 @@
 name: dbs
 description: "Don't Be Silent - 中文商业诊断与借口识别框架。用于锐评用户想法、识别借口、消解无意义问题。"
 version: 1.0.0
-author: LockAI
+author: applan
 license: MIT
 metadata:
   hermes:

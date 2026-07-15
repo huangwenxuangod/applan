@@ -1,0 +1,39 @@
+# applan 后端（Docker Compose）
+# 用法：
+#   cp .env.example .env && nano .env   # 填你的 DeepSeek Key
+#   docker compose up -d --build
+#
+# 只想先不花 Key 跑通链路？用 mock 模式：
+#   docker compose --profile mock up -d
+#   （mock 模式不需要 .env 里的 Key，直接放行/锁屏用于验证 App 协议）
+
+services:
+  appplan-backend:
+    build: .
+    image: appplan-backend:latest
+    container_name: appplan-backend
+    ports:
+      # 容器内监听 8787；宿主映射到 8799，由 Caddy 的 :8787 反代过来，避免和 Caddy 抢端口
+      - "8799:8787"
+    env_file:
+      - .env
+    volumes:
+      # 挂成只读，改完 SOUL.md / proxy_backend.py 重启容器即生效，无需重建镜像
+      - ./SOUL.md:/app/SOUL.md:ro
+      - ./proxy_backend.py:/app/proxy_backend.py:ro
+      # applan.md 必须可写：后端会把用户反复用的借口自动记录/计数到这里
+      - ./applan.md:/app/applan.md
+    restart: unless-stopped
+
+  # 可选：零依赖 mock，不带 AI，仅验证 App↔后端 协议链路
+  appplan-mock:
+    image: python:3.11-slim
+    container_name: appplan-mock
+    profiles: ["mock"]
+    working_dir: /app
+    command: ["python3", "mock_backend.py"]
+    ports:
+      - "8787:8787"
+    volumes:
+      - ./mock_backend.py:/app/mock_backend.py:ro
+    restart: unless-stopped
