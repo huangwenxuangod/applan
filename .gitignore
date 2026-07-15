@@ -1,4 +1,4 @@
-# IDE
+# ===== IDE =====
 .idea/
 .vscode/
 *.iml
@@ -8,7 +8,7 @@
 *.swp
 *.swo
 
-# OS
+# ===== OS =====
 .DS_Store
 .DS_Store?
 ._*
@@ -17,16 +17,19 @@
 ehthumbs.db
 Thumbs.db
 
-# Android Submodule
-android/.gradle
-android/build
-android/app/build
+# ===== Android 构建产物 & 签名密钥（递归忽略所有子目录）=====
+**/build/
+**/.gradle/
+**/.cxx/
 android/local.properties
-android/*.apk
-android/*.jks
-android/captures
+captures/
+# 签名密钥 / 打包产物：全局递归匹配，避免子目录漏网
+*.apk
+*.aab
+*.jks
+*.keystore
 
-# Node/Server
+# ===== Node / Server =====
 node_modules/
 dist/
 server/node_modules
@@ -34,10 +37,8 @@ server/dist
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-package-lock.json
-yarn.lock
 
-# Temp & Upload
+# ===== 临时 & 上传 =====
 .uploads/
 *.log
 *.tmp
@@ -45,4 +46,5 @@ yarn.lock
 *.zip
 *.rar
 
-*.apk
+# ===== 本地工具记忆（WorkBuddy 运行态，不进版本库）=====
+.workbuddy/
