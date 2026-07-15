@@ -1,4 +1,4 @@
 <resources>
-    <string name="app_name">AppPlan</string>
-    <string name="accessibility_desc">AppPlan锁屏守门人 - AI判断你的意图，防止无意义的手机使用</string>
+    <string name="app_name">applan</string>
+    <string name="accessibility_desc">applan锁屏守门人 - AI判断你的意图，防止无意义的手机使用</string>
 </resources>

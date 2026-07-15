@@ -1,4 +1,4 @@
-# LockAI ProGuard Rules
+# applan ProGuard Rules
 
 # OkHttp3
 -dontwarn okhttp3.**
@@ -18,14 +18,14 @@
 -dontwarn androidx.compose.**
 
 # Keep accessibility service and broadcast receivers
--keep class com.lockai.service.** { *; }
--keep class com.lockai.receiver.** { *; }
+-keep class com.applan.service.** { *; }
+-keep class com.applan.receiver.** { *; }
 
 # Keep data classes used for JSON serialization
--keep class com.lockai.network.** { *; }
+-keep class com.applan.network.** { *; }
 
 # Keep Application class
--keep class com.lockai.LockAiApp { *; }
+-keep class com.applan.ApplanApp { *; }
 
 # Keep enum classes
 -keepclassmembers enum * {

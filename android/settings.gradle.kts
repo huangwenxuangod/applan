@@ -17,5 +17,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "LockAI"
+rootProject.name = "applan"
 include(":app")

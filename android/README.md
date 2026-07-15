@@ -3,7 +3,7 @@
 ### 如何在Android Studio中打开
 
 1. 打开Android Studio（Koala或更高版本）
-2. File → Open → 选择 `lockai/android` 目录
+2. File → Open → 选择 `applan/android` 目录
 3. 等待Gradle同步完成（首次可能需要下载依赖，几分钟）
 4. 如果提示SDK路径不对，编辑 `local.properties` 设置正确的SDK路径：
    ```
@@ -19,11 +19,11 @@ android/
 │   ├── build.gradle.kts          # 应用依赖配置
 │   └── src/main/
 │       ├── AndroidManifest.xml   # 权限和组件声明
-│       ├── java/com/lockai/
+│       ├── java/com/applan/
 │       │   ├── MainActivity.kt           # 入口Activity
-│       │   ├── LockAiApp.kt              # Application
+│       │   ├── ApplanApp.kt              # Application
 │       │   ├── network/
-│       │   │   ├── HermesClient.kt       # HTTP SSE客户端
+│       │   │   ├── ApplanClient.kt       # HTTP SSE客户端
 │       │   │   └── ChatMessage.kt        # 数据模型
 │       │   ├── service/
 │       │   │   ├── KeepAliveService.kt   # 前台保活服务

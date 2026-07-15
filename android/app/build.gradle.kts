@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "com.lockai"
+    namespace = "com.applan"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.lockai"
+        applicationId = "com.applan"
         minSdk = 24
         targetSdk = 35
         versionCode = 2
@@ -21,10 +21,10 @@ android {
 
     signingConfigs {
         create("release") {
-            storeFile = file("lockai-release.jks")
-            storePassword = "lockai2026"
-            keyAlias = "lockai"
-            keyPassword = "lockai2026"
+            storeFile = file("applan-release.jks")
+            storePassword = "applan2026"
+            keyAlias = "applan"
+            keyPassword = "applan2026"
         }
     }
 
