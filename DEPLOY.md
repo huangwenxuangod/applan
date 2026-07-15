@@ -1,103 +1,76 @@
-# LockAI 部署指南
+# applan 部署指南
 
-## 一、服务器部署（腾讯云）
+## 一、后端部署（applan Proxy，Docker）
 
-### 1.1 准备工作
-- 腾讯云轻量服务器（2C2G Ubuntu 22.04 足够）
-- 一个域名（解析到服务器IP）
+后端是一个 OpenAI 兼容代理（`server/proxy_backend.py`，FastAPI + httpx），做三件事：
+- 注入 `SOUL.md` 人格（五层漏斗守门人）
+- 把 `applan.md`（历史漏洞记忆）注入 system，让模型能说"你第N次说这个了"
+- 逐字节透传 DeepSeek 的 SSE 流与 `tools`（lock_screen / exit_app），100% 兼容 App 的解析器
 
-### 1.2 安装 Hermes Agent
+### 1.1 前置
+- 一台能装 Docker 的 Linux 服务器（2C2G 起步，Ubuntu 22.04 推荐）
+- 一个 DeepSeek API Key（https://platform.deepseek.com）
 
+### 1.2 上传 server/ 目录
+把本项目 `server/` 整个目录传到服务器，例如 `~/appplan-server/`。
+
+### 1.3 配置环境变量
 ```bash
-# SSH到服务器后执行
-curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash -s -- --skip-browser
+cd ~/appplan-server
+cp .env.example .env
+# 编辑 .env，填入 DEEPSEEK_API_KEY=sk-xxx，其余用默认值即可
 ```
 
-### 1.3 配置 DeepSeek API
-
-编辑 `~/.hermes/.env`：
+### 1.4 启动（Docker Compose）
 ```bash
-OPENAI_API_KEY=sk-your-deepseek-key
-OPENAI_BASE_URL=https://api.deepseek.com
-MODEL=deepseek-chat
-API_SERVER_ENABLED=true
-API_SERVER_HOST=127.0.0.1
-API_SERVER_PORT=8787
-API_SERVER_KEY=your-random-secret-key
+docker compose up -d --build
 ```
+容器内监听 8787，宿主映射到 8799。
 
-### 1.4 上传人格和Skill配置
-
-将本项目 `server/` 目录下的文件上传到服务器：
-- `SOUL.md` → `~/.hermes/SOUL.md`
-- `dbs-skill/SKILL.md` → `~/.hermes/skills/dbs/SKILL.md`
-
-### 1.5 安装 Caddy（HTTPS反代）
-
-```bash
-sudo apt install -y debian-keyring debian-archive-keyring apt-transport-https
-curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list
-sudo apt update && sudo apt install -y caddy
+### 1.5 反代（Caddy，可选但推荐）
+`/etc/caddy/Caddyfile` 追加：
 ```
-
-上传 `server/Caddyfile` 到 `/etc/caddy/Caddyfile`，将域名替换为你的域名：
-```
-your-domain.com {
-    reverse_proxy 127.0.0.1:8787
+:8787 {
+    reverse_proxy 127.0.0.1:8799
 }
 ```
-
 ```bash
-sudo systemctl restart caddy
+sudo systemctl reload caddy
 ```
 
-### 1.6 启动Hermes服务
-
+### 1.6 验证
 ```bash
-sudo hermes gateway install --system
-sudo systemctl enable hermes
-sudo systemctl start hermes
-```
+# 模型列表
+curl http://localhost:8787/v1/models
 
-验证：`curl https://your-domain.com/v1/models -H "Authorization: Bearer your-secret-key"`
+# 带工具测一次锁屏（应返回 tool_calls: lock_screen）
+curl http://<服务器IP>:8787/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"deepseek-chat","messages":[{"role":"user","content":"我就看一眼"}],"tools":[{"type":"function","function":{"name":"lock_screen","description":"立即锁屏","parameters":{"type":"object","properties":{}}}}],"tool_choice":"auto","stream":false}'
+```
 
 ---
 
-## 二、Android端构建
+## 二、Android 端构建
 
 ### 2.1 配置服务器地址
-
-**不需要在APP内设置！** 直接在构建配置中写死：
-
-编辑 `android/app/build.gradle.kts`，修改 defaultConfig 中的：
+编辑 `android/app/build.gradle.kts`：
 ```kotlin
-buildConfigField("String", "SERVER_URL", "\"https://your-domain.com\"")
-buildConfigField("String", "API_KEY", "\"your-random-secret-key\"")
+buildConfigField("String", "SERVER_URL", "\"https://你的域名或IP:8787\"")
+buildConfigField("String", "API_KEY", "\"\"")   // 代理默认免鉴权
 ```
 
-### 2.2 用Android Studio打开
-
-1. 打开 Android Studio（Koala或更高版本）
-2. File → Open → 选择 `lockai/android` 目录
-3. 等待Gradle Sync完成
-4. 如果提示SDK路径，创建 `local.properties`：
-   ```properties
-   sdk.dir=C\:\\Users\\你的用户名\\AppData\\Local\\Android\\Sdk
-   ```
-5. 手机开启USB调试连接，点Run ▶️
+### 2.2 用 Android Studio 打开
+1. Android Studio（Koala 或更高）→ File → Open → 选择 `android/` 目录
+2. 等待 Gradle Sync 完成
+3. 手机开启 USB 调试，点 Run ▶️
+（如需 Release 包：签名已配置为 `applan-release.jks`，`build.gradle.kts` 中 alias=`applan`）
 
 ### 2.3 首次使用
-
-1. 打开APP后会请求通知权限 → 允许
-2. 点击右上角 ⚙️ 进入设置
-3. 逐个打开开关，跳转到对应设置页开启权限：
-   - **自启动**：跳转到厂商自启动管理页，手动开启
-   - **后台运行**：跳转到电池优化，将LockAI加入白名单
-   - **锁屏服务**：跳转到无障碍设置，开启LockAI服务
-   - **通知**：跳转到通知设置，确保通知开启
-4. （推荐）点击"设为默认桌面"将LockAI设为默认Launcher
-5. 返回聊天页，测试AI对话
+1. 打开 App 请求通知权限 → 允许
+2. 右上角 ⚙️ 进入设置，逐项开启：自启动 / 后台运行（电池白名单）/ 锁屏服务（无障碍）/ 通知
+3. （推荐）点击"设为默认桌面"将 applan 设为默认 Launcher
+4. 返回聊天页，测试 AI 对话与锁屏
 
 ---
 
@@ -105,7 +78,7 @@ buildConfigField("String", "API_KEY", "\"your-random-secret-key\"")
 
 | 权限 | 用途 | 是否必须 |
 |------|------|---------|
-| INTERNET | 连接Hermes Agent API | 必须 |
+| INTERNET | 连接 applan 后端 API | 必须 |
 | FOREGROUND_SERVICE | 保持后台服务运行 | 必须 |
 | RECEIVE_BOOT_COMPLETED | 开机自启动 | 必须 |
 | POST_NOTIFICATIONS | 显示前台服务通知(Android 13+) | 必须 |
