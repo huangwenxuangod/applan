@@ -7,22 +7,24 @@ import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.applan.util.AppState
 import com.applan.util.AutoStartHelper
 import com.applan.util.PermissionHelper
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 
 data class PermissionItem(
     val id: String,
@@ -34,22 +36,38 @@ data class PermissionItem(
     val canDetect: Boolean = true // 是否能通过代码检测权限状态
 )
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun OnboardingScreen(
     onAllGranted: () -> Unit
 ) {
     val context = LocalContext.current
-    var refreshKey by remember { mutableStateOf(0) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    // 用一个版本号触发刷新，只在生命周期RESUME时更新
+    var permissionVersion by remember { mutableStateOf(0) }
     var autostartConfirmed by remember { mutableStateOf(false) }
 
-    fun refresh() { refreshKey++ }
+    // 监听生命周期 - 只有从设置页面返回时(onResume)才刷新权限状态
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                permissionVersion++
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
 
     fun openSettings(action: () -> Unit) {
         AppState.startSettingsSession()
         action()
     }
 
-    val permissions = remember(refreshKey, autostartConfirmed) {
+    // 只在permissionVersion变化时重新计算权限列表
+    val permissions = remember(permissionVersion, autostartConfirmed) {
         listOf(
             PermissionItem(
                 id = "notification",
@@ -108,16 +126,10 @@ fun OnboardingScreen(
         )
     }
 
-    // 自动检测权限变化
-    LaunchedEffect(Unit) {
-        while (isActive) {
-            delay(500)
-            refresh()
-        }
-    }
-
     // 必需权限：通知、电池、无障碍、自启动确认
-    val requiredGranted = permissions.filter { it.id != "launcher" && it.id != "overlay" }.all { it.isGranted() }
+    val requiredGranted = remember(permissionVersion, autostartConfirmed) {
+        permissions.filter { it.id != "launcher" && it.id != "overlay" }.all { it.isGranted() }
+    }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background
@@ -157,8 +169,10 @@ fun OnboardingScreen(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                items(permissions.size) { idx ->
-                    val perm = permissions[idx]
+                items(
+                    items = permissions,
+                    key = { it.id }
+                ) { perm ->
                     val granted = perm.isGranted()
                     val isRequired = perm.id != "launcher" && perm.id != "overlay"
                     PermissionRow(
@@ -167,12 +181,13 @@ fun OnboardingScreen(
                         isRequired = isRequired,
                         onClick = {
                             perm.request()
-                            refresh()
+                            // 点击后延迟一点刷新，给系统设置时间响应
+                            permissionVersion++
                         },
                         onAutostartConfirm = if (perm.id == "autostart") {
                             {
                                 autostartConfirmed = !autostartConfirmed
-                                refresh()
+                                permissionVersion++
                             }
                         } else null
                     )

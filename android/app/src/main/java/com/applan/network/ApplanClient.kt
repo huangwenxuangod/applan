@@ -36,7 +36,9 @@ class ApplanClient(private val context: Context? = null) {
         private const val MAX_RETRY = 2
     }
 
+    @Volatile
     private var serverUrl: String = BuildConfig.SERVER_URL
+    @Volatile
     private var apiKey: String = BuildConfig.API_KEY
 
     private val client: OkHttpClient by lazy {
@@ -46,6 +48,11 @@ class ApplanClient(private val context: Context? = null) {
             .writeTimeout(30, TimeUnit.SECONDS)
             .pingInterval(30, TimeUnit.SECONDS)  // 30秒心跳检测死连接
             .retryOnConnectionFailure(true)      // 自动重试连接失败
+            // 性能优化：配置dispatcher限制并发，不占用过多线程
+            .dispatcher(okhttp3.Dispatcher().apply {
+                maxRequests = 3
+                maxRequestsPerHost = 2
+            })
             .build()
     }
 
@@ -56,10 +63,12 @@ class ApplanClient(private val context: Context? = null) {
 
     fun isConfigured(): Boolean = serverUrl.isNotEmpty()
 
+    fun getServerUrl(): String = serverUrl
+
     /**
-     * 检查网络是否可用
+     * 检查网络是否可用 - 这个方法在调用时要确保在IO线程
      */
-    fun isNetworkAvailable(): Boolean {
+    private fun isNetworkAvailable(): Boolean {
         val appCtx = context ?: return true
         return try {
             val cm = appCtx.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
@@ -72,9 +81,9 @@ class ApplanClient(private val context: Context? = null) {
         }
     }
 
-    // 移除自定义getter，避免smart cast问题
-
     fun chatStream(messages: List<ChatMessage>): Flow<StreamEvent> = callbackFlow {
+        // 注意：整个callbackFlow在flowOn(Dispatchers.IO)下执行，所以所有操作都在IO线程
+
         // 网络预检查
         if (!isConfigured()) {
             trySend(StreamEvent.Error("服务器地址未配置。请先在设置中配置applan 服务器地址"))
@@ -238,7 +247,7 @@ class ApplanClient(private val context: Context? = null) {
         awaitClose {
             eventSource.cancel()
         }
-    }.flowOn(Dispatchers.IO)
+    }.flowOn(Dispatchers.IO) // 整个网络请求在IO线程执行
 
     private fun formatError(t: Throwable?, response: Response?): String {
         if (response != null && !response.isSuccessful) {
@@ -247,9 +256,9 @@ class ApplanClient(private val context: Context? = null) {
         }
         return when (t) {
             is UnknownHostException ->
-                "无法连接服务器\nDNS解析失败，请检查：\n1. 服务器地址是否正确\n2. 手机是否在同一WiFi网络\n3. applan 服务器是否正在运行\n当前地址: $serverUrl"
+                "无法连接服务器\nDNS解析失败，请检查：\n1. 服务器地址是否正确\n2. 手机是否能访问互联网\n3. 服务器是否在线\n当前地址: $serverUrl"
             is ConnectException ->
-                "连接被拒绝\n服务器($serverUrl)拒绝连接，请确认：\n1. applan 服务器已启动\n2. 端口8787已开放\n3. 防火墙未阻挡"
+                "连接被拒绝\n服务器($serverUrl)拒绝连接，请确认：\n1. applan 服务器已启动\n2. 端口8799已开放\n3. 防火墙/安全组已放行"
             is SocketTimeoutException ->
                 "连接超时（服务器响应太慢）\n可能原因：\n1. 服务器负载过高\n2. 网络延迟大\n3. applan 服务器未完全启动\n请稍后重试，或检查服务器状态"
             is IOException -> {

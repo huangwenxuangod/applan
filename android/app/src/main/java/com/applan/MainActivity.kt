@@ -11,6 +11,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.core.view.WindowCompat
+import com.applan.service.BlockOverlay
 import com.applan.service.DaemonService
 import com.applan.service.KeepAliveService
 import com.applan.ui.ApplanApp
@@ -24,8 +25,19 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // 初始化AppConfig（DeviceProtectedStorage，锁屏可访问）
+        // 先初始化AppConfig（DeviceProtectedStorage，锁屏可访问）
         AppConfig.init(this)
+
+        // 判断是否是用户主动打开App：
+        // 1. CATEGORY_LAUNCHER → 从桌面图标点击
+        // 2. FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY → 从最近任务列表点击
+        val isUserLaunch = intent?.hasCategory(Intent.CATEGORY_LAUNCHER) == true
+                || (intent?.flags?.and(Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) ?: 0) != 0
+        if (isUserLaunch) {
+            // 用户主动打开，重置放行标志，回到守护模式
+            AppConfig.setExitGranted(false)
+            AppState.resetGrant()
+        }
 
         // 确保窗口在锁屏上显示（在onCreate早期设置，window此时可用）
         try {
@@ -46,12 +58,30 @@ class MainActivity : ComponentActivity() {
             // window可能还没准备好，忽略，后面onAttachedToWindow再设
         }
 
+        // 只在首次创建时启动服务，避免onResume重复启动
         KeepAliveService.start(this)
         DaemonService.start(this)
         AppState.touch()
 
         setContent {
             ApplanApp(context = this)
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        // onNewIntent也检查是否是用户从桌面/最近任务主动打开
+        val isUserLaunch = intent.hasCategory(Intent.CATEGORY_LAUNCHER)
+                || (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0
+        if (isUserLaunch) {
+            AppConfig.setExitGranted(false)
+            AppState.resetGrant()
+        }
+        AppState.touch()
+        BlockOverlay.hide()
+        setupFullscreenImmersive()
+        if (needsResetOnResume) {
+            resetChatConversation()
         }
     }
 
@@ -99,17 +129,19 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        AppState.onActivityResumed()
         AppState.touch()
+        // Activity到前台，隐藏全局遮罩
+        BlockOverlay.hide()
         setupFullscreenImmersive()
         if (needsResetOnResume) {
             resetChatConversation()
         }
-        KeepAliveService.start(this)
-        DaemonService.start(this)
     }
 
     override fun onPause() {
         super.onPause()
+        AppState.onActivityPaused()
         AppState.touch()
     }
 
@@ -123,14 +155,5 @@ class MainActivity : ComponentActivity() {
     @Deprecated("Use OnBackPressedCallback")
     override fun onBackPressed() {
         // 不调用super，BackHandler在Compose中处理
-    }
-
-    override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent)
-        AppState.touch()
-        setupFullscreenImmersive()
-        if (needsResetOnResume) {
-            resetChatConversation()
-        }
     }
 }

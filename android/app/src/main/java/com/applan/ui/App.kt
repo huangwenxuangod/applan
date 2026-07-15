@@ -17,6 +17,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.applan.BuildConfig
 import com.applan.network.ApplanClient
+import com.applan.service.BlockOverlay
 import com.applan.service.KeepAliveService
 import com.applan.service.LockAccessibilityService
 import com.applan.ui.chat.ChatScreen
@@ -86,16 +87,37 @@ fun ApplanApp(context: Context) {
 
         val chatViewModel: ChatViewModel = viewModel()
 
-        // 初始化ApplanClient配置
-        LaunchedEffect(Unit) {
-            chatViewModel.updateConfig(serverUrl, apiKey)
-        }
-
         var currentScreen by remember {
             mutableStateOf<Screen>(if (hasOnboarded) Screen.Chat else Screen.Onboarding)
         }
         var showUpdateDialog by remember { mutableStateOf<AppUpdateManager.UpdateInfo?>(null) }
         var crashReport by remember { mutableStateOf<String?>(null) }
+
+        // 初始化ApplanClient配置（只执行一次）
+        LaunchedEffect(Unit) {
+            chatViewModel.updateConfig(serverUrl, apiKey)
+            if (hasOnboarded) {
+                KeepAliveService.start(context)
+                // 启动后检查更新
+                scope.launch {
+                    val update = AppUpdateManager.checkForUpdate()
+                    if (update != null) showUpdateDialog = update
+                }
+            }
+        }
+
+        // 严格模式权限撤销检测：如果KeepAliveService检测到权限被关闭，强制跳回引导页
+        LaunchedEffect(Unit) {
+            while (true) {
+                kotlinx.coroutines.delay(3000)
+                if (AppState.isPermissionRevoked()) {
+                    AppState.clearPermissionRevoked()
+                    hasOnboarded = false
+                    currentScreen = Screen.Onboarding
+                    showTopToast(context, "⚠️ 检测到关键权限被关闭，请重新开启")
+                }
+            }
+        }
 
         // 检查上次崩溃记录
         LaunchedEffect(Unit) {
@@ -124,18 +146,6 @@ fun ApplanApp(context: Context) {
         DisposableEffect(Unit) {
             chatViewModelRef = chatViewModel
             onDispose { chatViewModelRef = null }
-        }
-
-        LaunchedEffect(Unit) {
-            chatViewModel.updateConfig(serverUrl, apiKey)
-            if (hasOnboarded) {
-                KeepAliveService.start(context)
-                // 启动后检查更新
-                scope.launch {
-                    val update = AppUpdateManager.checkForUpdate()
-                    if (update != null) showUpdateDialog = update
-                }
-            }
         }
 
         // 崩溃报告对话框
@@ -212,15 +222,25 @@ fun ApplanApp(context: Context) {
             )
         }
 
-        BackHandler(enabled = currentScreen == Screen.Chat || currentScreen == Screen.Onboarding) {
+        BackHandler(enabled = true) {
+            // 完全拦截系统返回手势：
+            // - Settings/EmergencyUnlock → 界面内导航回到Chat
+            // - Chat/Onboarding → 什么都不做，彻底吞掉返回事件，不退出
             when (currentScreen) {
-                is Screen.Chat -> {
-                    AppState.grantByAi()
-                    markNeedsReset()
-                    activity?.moveTaskToBack(true)
+                is Screen.Settings -> {
+                    AppState.endSettingsSession()
+                    currentScreen = Screen.Chat
                 }
-                is Screen.Onboarding -> {}
-                else -> {}
+                is Screen.EmergencyUnlock -> {
+                    currentScreen = Screen.Chat
+                }
+                is Screen.Chat -> {
+                    // 聊天页：完全拦截，不做任何操作，不退出App
+                    // 用户只能通过AI放行或紧急解锁才能离开
+                }
+                is Screen.Onboarding -> {
+                    // 引导页：完全拦截，必须完成权限配置才能进入
+                }
             }
         }
 
@@ -248,13 +268,21 @@ fun ApplanApp(context: Context) {
         }
 
         fun handleExitApp() {
+            // AI放行：设置持久化标志，所有拦截/保活逻辑都检查这个标志
+            AppConfig.setExitGranted(true)
             AppState.grantByAi()
+            // 立即隐藏遮罩，确保用户回到桌面时看不到遮罩
+            BlockOverlay.hide()
             markNeedsReset()
             activity?.moveTaskToBack(true)
         }
 
         fun emergencyUnlock() {
+            // 紧急解锁：同样设置持久化放行标志
+            AppConfig.setExitGranted(true)
             AppState.grantByEmergency()
+            // 立即隐藏遮罩
+            BlockOverlay.hide()
             markNeedsReset()
             activity?.moveTaskToBack(true)
             currentScreen = Screen.Chat
@@ -305,9 +333,6 @@ fun ApplanApp(context: Context) {
                                     showTopToast(context, "当前已是最新版本 v${BuildConfig.VERSION_NAME}")
                                 }
                             }
-                        },
-                        onConfigSaved = { url, key ->
-                            chatViewModel.updateConfig(url, key)
                         }
                     )
                     is Screen.EmergencyUnlock -> EmergencyUnlockScreen(

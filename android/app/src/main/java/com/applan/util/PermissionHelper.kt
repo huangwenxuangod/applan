@@ -1,6 +1,8 @@
 package com.applan.util
 
+import android.app.AppOpsManager
 import android.app.admin.DevicePolicyManager
+import android.app.AlarmManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -144,5 +146,60 @@ object PermissionHelper {
             }
         }
         context.startActivity(intent)
+    }
+
+    /**
+     * 检查悬浮窗权限是否开启（严格模式检查用别名）
+     */
+    fun isOverlayEnabled(context: Context): Boolean {
+        return canDrawOverlays(context)
+    }
+
+    /**
+     * 检查电池优化白名单（严格模式检查用别名）
+     */
+    fun isBatteryWhitelisted(context: Context): Boolean {
+        return isIgnoringBatteryOptimizations(context)
+    }
+
+    /**
+     * 检查使用情况访问权限是否已授权
+     */
+    fun isUsageStatsGranted(context: Context): Boolean {
+        val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
+        val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            appOps.unsafeCheckOpNoThrow(
+                AppOpsManager.OPSTR_GET_USAGE_STATS,
+                android.os.Process.myUid(),
+                context.packageName
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            appOps.checkOpNoThrow(
+                AppOpsManager.OPSTR_GET_USAGE_STATS,
+                android.os.Process.myUid(),
+                context.packageName
+            )
+        }
+        return mode == AppOpsManager.MODE_ALLOWED
+    }
+
+    /**
+     * 检查后台启动权限是否允许（Android 12+）
+     * 通过检查精确闹钟权限和电池白名单综合判断
+     */
+    fun isBackgroundStartEnabled(context: Context): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            return true
+        }
+        // Android 12+ 检查精确闹钟权限（用于服务重启）+ 电池白名单
+        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val canScheduleExact = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            alarmManager.canScheduleExactAlarms()
+        } else {
+            true
+        }
+        // 默认桌面应用不受后台启动限制
+        return canScheduleExact || isDefaultLauncher(context)
     }
 }

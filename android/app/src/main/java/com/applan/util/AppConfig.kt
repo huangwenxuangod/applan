@@ -13,6 +13,8 @@ object AppConfig {
     private const val KEY_SERVER_URL = "server_url"
     private const val KEY_API_KEY = "api_key"
     private const val KEY_MODEL = "model"
+    private const val KEY_STRICT_MODE = "strict_mode_enabled"
+    private const val KEY_EXIT_GRANTED = "exit_granted"
 
     private lateinit var prefs: SharedPreferences
 
@@ -49,4 +51,34 @@ object AppConfig {
     fun saveModel(model: String) {
         prefs.edit().putString(KEY_MODEL, model.trim()).apply()
     }
+
+    /**
+     * 严格模式：权限一旦开启就不能关闭
+     * 当所有必需权限开启后自动启用，启用后设置页面的权限开关锁定
+     */
+    fun isStrictModeEnabled(): Boolean {
+        return prefs.getBoolean(KEY_STRICT_MODE, false)
+    }
+
+    fun enableStrictMode() {
+        prefs.edit().putBoolean(KEY_STRICT_MODE, true).apply()
+    }
+
+    /**
+     * 退出放行标志：AI调用exit_app或紧急解锁后设为true
+     * true时：AccessibilityService不拦截、KeepAliveService不拉起Activity、遮罩不显示
+     * 用户下次主动点击图标打开App时重置为false
+     */
+    fun isExitGranted(): Boolean {
+        return prefs.getBoolean(KEY_EXIT_GRANTED, false)
+    }
+
+    fun setExitGranted(granted: Boolean) {
+        prefs.edit().putBoolean(KEY_EXIT_GRANTED, granted).apply()
+    }
+
+    /**
+     * 注意：不提供disableStrictMode的public方法，一旦启用无法关闭
+     * 只能通过清除应用数据重置
+     */
 }

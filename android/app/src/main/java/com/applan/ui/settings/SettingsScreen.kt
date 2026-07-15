@@ -6,28 +6,27 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.applan.R
 import com.applan.util.AppConfig
 import com.applan.util.AppState
 import com.applan.util.AppUpdateManager
 import com.applan.util.AutoStartHelper
 import com.applan.util.PermissionHelper
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -41,17 +40,32 @@ fun SettingsScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val lifecycleOwner = LocalLifecycleOwner.current
 
-    var refreshKey by remember { mutableStateOf(0) }
+    // 只在生命周期RESUME时刷新权限状态，移除800ms死循环轮询
+    var permissionVersion by remember { mutableStateOf(0) }
     val versionName = remember { AppUpdateManager.getCurrentVersionName(context) }
 
-    val batteryGranted by remember(refreshKey) {
+    // 监听生命周期 - 只有从设置页面返回时(onResume)才刷新权限状态
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                permissionVersion++
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
+    val batteryGranted by remember(permissionVersion) {
         derivedStateOf { PermissionHelper.isIgnoringBatteryOptimizations(context) }
     }
-    val accessibilityGranted by remember(refreshKey) {
+    val accessibilityGranted by remember(permissionVersion) {
         derivedStateOf { PermissionHelper.isAccessibilityEnabled(context) }
     }
-    val notificationGranted by remember(refreshKey) {
+    val notificationGranted by remember(permissionVersion) {
         derivedStateOf {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
@@ -59,22 +73,51 @@ fun SettingsScreen(
             } else true
         }
     }
-    val overlayGranted by remember(refreshKey) {
+    val overlayGranted by remember(permissionVersion) {
         derivedStateOf { PermissionHelper.canDrawOverlays(context) }
     }
-    val isDefaultLauncher by remember(refreshKey) {
+    val isDefaultLauncher by remember(permissionVersion) {
         derivedStateOf { PermissionHelper.isDefaultLauncher(context) }
     }
 
-    // 服务器配置状态
-    var serverUrlInput by remember { mutableStateOf(AppConfig.getServerUrl()) }
-    var apiKeyInput by remember { mutableStateOf(AppConfig.getApiKey()) }
-    var showConfigSaved by remember { mutableStateOf(false) }
+    // 严格模式状态
+    var strictModeEnabled by remember(permissionVersion) {
+        mutableStateOf(AppConfig.isStrictModeEnabled())
+    }
 
-    LaunchedEffect(Unit) {
-        while (isActive) {
-            delay(800)
-            refreshKey++
+    // 必需权限检查 - 用于自动启用严格模式
+    val usageStatsGranted by remember(permissionVersion) {
+        derivedStateOf { PermissionHelper.isUsageStatsGranted(context) }
+    }
+    val backgroundStartGranted by remember(permissionVersion) {
+        derivedStateOf {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                PermissionHelper.isBackgroundStartEnabled(context)
+            } else true
+        }
+    }
+    val batteryWhitelisted by remember(permissionVersion) {
+        derivedStateOf { PermissionHelper.isBatteryWhitelisted(context) }
+    }
+
+    // 自动启用严格模式：当严格模式未启用但所有必需权限都已开启时
+    LaunchedEffect(
+        accessibilityGranted,
+        overlayGranted,
+        usageStatsGranted,
+        backgroundStartGranted,
+        batteryWhitelisted
+    ) {
+        if (!strictModeEnabled) {
+            val allRequiredGranted = accessibilityGranted &&
+                overlayGranted &&
+                usageStatsGranted &&
+                backgroundStartGranted &&
+                batteryWhitelisted
+            if (allRequiredGranted) {
+                AppConfig.enableStrictMode()
+                strictModeEnabled = true
+            }
         }
     }
 
@@ -83,17 +126,6 @@ fun SettingsScreen(
         onBeforeOpenSettings()
         AppState.startSettingsSession()
         action()
-    }
-
-    fun saveConfig() {
-        AppConfig.saveServerUrl(serverUrlInput)
-        AppConfig.saveApiKey(apiKeyInput)
-        onConfigSaved(serverUrlInput.trimEnd('/'), apiKeyInput.trim())
-        showConfigSaved = true
-        scope.launch {
-            delay(1500)
-            showConfigSaved = false
-        }
     }
 
     Scaffold(
@@ -114,17 +146,7 @@ fun SettingsScreen(
                 )
             )
         },
-        containerColor = MaterialTheme.colorScheme.background,
-        snackbarHost = {
-            if (showConfigSaved) {
-                Snackbar(
-                    modifier = Modifier.padding(16.dp),
-                    containerColor = MaterialTheme.colorScheme.primary
-                ) {
-                    Text("配置已保存 ✓")
-                }
-            }
-        }
+        containerColor = MaterialTheme.colorScheme.background
     ) { padding ->
         LazyColumn(
             modifier = Modifier
@@ -133,86 +155,35 @@ fun SettingsScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
-            // 服务器配置
-            item {
-                SectionTitle("服务器配置")
-                Spacer(modifier = Modifier.height(8.dp))
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(14.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        OutlinedTextField(
-                            value = serverUrlInput,
-                            onValueChange = { serverUrlInput = it },
-                            label = { Text("applan 服务器 地址") },
-                            placeholder = { Text("http://192.168.x.x:8787") },
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(12.dp),
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                            leadingIcon = {
-                                Icon(
-                                    painter = painterResource(R.drawable.ic_settings),
-                                    contentDescription = null,
-                                    modifier = Modifier.size(20.dp),
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        )
-                        Spacer(modifier = Modifier.height(12.dp))
-                        OutlinedTextField(
-                            value = apiKeyInput,
-                            onValueChange = { apiKeyInput = it },
-                            label = { Text("API Key（可选）") },
-                            placeholder = { Text("留空则不使用") },
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(12.dp),
-                            singleLine = true,
-                            leadingIcon = {
-                                Icon(
-                                    painter = painterResource(R.drawable.ic_lock),
-                                    contentDescription = null,
-                                    modifier = Modifier.size(20.dp),
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        )
-                        Spacer(modifier = Modifier.height(12.dp))
+            // 严格模式警告横幅
+            if (strictModeEnabled) {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFFE53935))
+                    ) {
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            OutlinedButton(
-                                onClick = {
-                                    serverUrlInput = AppConfig.getServerUrl()
-                                    apiKeyInput = AppConfig.getApiKey()
-                                },
-                                modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(12.dp)
-                            ) {
-                                Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("重置")
-                            }
-                            Button(
-                                onClick = { saveConfig() },
-                                modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(12.dp)
-                            ) {
-                                Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("保存")
-                            }
+                            Icon(
+                                Icons.Default.Lock,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                "严格模式已启用 - 权限配置已锁定，无法关闭",
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium,
+                                lineHeight = 20.sp
+                            )
                         }
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            "提示：同一WiFi下填电脑局域网IP，如 http://192.168.1.100:8787",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            lineHeight = 18.sp
-                        )
                     }
                 }
             }
@@ -234,7 +205,8 @@ fun SettingsScreen(
                             onCheckedChange = {
                                 openSettings { AutoStartHelper.jumpToAutoStartSetting(context) }
                             },
-                            showSwitch = false
+                            showSwitch = false,
+                            enabled = !strictModeEnabled
                         )
                         HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
                         ToggleItem(
@@ -243,7 +215,8 @@ fun SettingsScreen(
                             checked = batteryGranted,
                             onCheckedChange = {
                                 openSettings { PermissionHelper.requestBatteryOptimization(context) }
-                            }
+                            },
+                            enabled = !strictModeEnabled
                         )
                         HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
                         ToggleItem(
@@ -252,7 +225,8 @@ fun SettingsScreen(
                             checked = accessibilityGranted,
                             onCheckedChange = {
                                 openSettings { PermissionHelper.jumpToAccessibilitySettings(context) }
-                            }
+                            },
+                            enabled = !strictModeEnabled
                         )
                         HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
                         ToggleItem(
@@ -261,7 +235,8 @@ fun SettingsScreen(
                             checked = overlayGranted,
                             onCheckedChange = {
                                 openSettings { PermissionHelper.jumpToOverlaySettings(context) }
-                            }
+                            },
+                            enabled = !strictModeEnabled
                         )
                         HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
                         ToggleItem(
@@ -270,7 +245,8 @@ fun SettingsScreen(
                             checked = notificationGranted,
                             onCheckedChange = {
                                 openSettings { PermissionHelper.jumpToNotificationSettings(context) }
-                            }
+                            },
+                            enabled = !strictModeEnabled
                         )
                     }
                 }
@@ -372,12 +348,13 @@ fun ToggleItem(
     desc: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
-    showSwitch: Boolean = true
+    showSwitch: Boolean = true,
+    enabled: Boolean = true
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onCheckedChange(!checked) }
+            .clickable(enabled = enabled) { onCheckedChange(!checked) }
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -386,30 +363,47 @@ fun ToggleItem(
                 title,
                 fontSize = 15.sp,
                 fontWeight = FontWeight.Medium,
-                color = MaterialTheme.colorScheme.onSurface
+                color = if (enabled) MaterialTheme.colorScheme.onSurface
+                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
             )
             Spacer(modifier = Modifier.height(2.dp))
             Text(
                 desc,
                 fontSize = 13.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = if (enabled) MaterialTheme.colorScheme.onSurfaceVariant
+                    else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
             )
         }
         Spacer(modifier = Modifier.width(12.dp))
         if (showSwitch) {
+            if (!enabled && checked) {
+                // 严格模式：已开启的开关旁显示锁图标
+                Icon(
+                    Icons.Default.Lock,
+                    contentDescription = "已锁定",
+                    tint = Color.Gray,
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+            }
             Switch(
                 checked = checked,
-                onCheckedChange = onCheckedChange,
+                onCheckedChange = if (enabled) onCheckedChange else null,
+                enabled = enabled,
                 colors = SwitchDefaults.colors(
                     checkedThumbColor = MaterialTheme.colorScheme.primary,
-                    checkedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
+                    checkedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f),
+                    disabledCheckedThumbColor = Color.Gray,
+                    disabledCheckedTrackColor = Color.LightGray,
+                    disabledUncheckedThumbColor = Color.Gray,
+                    disabledUncheckedTrackColor = Color.LightGray
                 )
             )
         } else {
             Text(
-                "去设置 ›",
+                if (enabled) "去设置 ›" else "已锁定",
                 fontSize = 13.sp,
-                color = MaterialTheme.colorScheme.primary,
+                color = if (enabled) MaterialTheme.colorScheme.primary else Color.Gray,
                 fontWeight = FontWeight.Medium
             )
         }

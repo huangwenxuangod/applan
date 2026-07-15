@@ -10,14 +10,13 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Handler
+import android.os.HandlerThread
 import android.os.IBinder
-import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.applan.CHANNEL_KEEP_ALIVE
-import com.applan.MainActivity
 import com.applan.R
 import com.applan.util.AppState
 
@@ -25,6 +24,11 @@ import com.applan.util.AppState
  * 守护服务（Daemon Service）
  * 第二个前台服务，与KeepAliveService互相守护
  * Cactus式双进程保活：两个Service都在onDestroy中重启对方
+ *
+ * 性能优化：
+ * - 使用工作线程Handler，不阻塞主线程
+ * - Service启动冷却机制，防止双Service互相无限启动
+ * - 检查间隔从15秒延长到30秒，减少唤醒
  */
 class DaemonService : Service() {
 
@@ -34,6 +38,10 @@ class DaemonService : Service() {
         private const val ACTION_PING = "com.applan.DAEMON_PING"
 
         fun start(context: Context) {
+            // 性能优化：加启动冷却，防止短时间内重复启动
+            if (!AppState.canStartDaemon()) {
+                return
+            }
             try {
                 val intent = Intent(context, DaemonService::class.java)
                 ContextCompat.startForegroundService(context, intent)
@@ -43,27 +51,41 @@ class DaemonService : Service() {
         }
     }
 
-    private val handler = Handler(Looper.getMainLooper())
+    // 性能优化：使用工作线程Handler，不占用主线程
+    private var handlerThread: HandlerThread? = null
+    private var handler: Handler? = null
     private var pingRunnable: Runnable? = null
 
     override fun onCreate() {
         super.onCreate()
         Log.d(TAG, "Daemon service created")
-        // 每15秒检查KeepAliveService是否存活
+
+        // 创建工作线程，所有定时任务跑在工作线程，不阻塞UI
+        handlerThread = HandlerThread("DaemonWorker").apply {
+            start()
+            handler = Handler(looper)
+        }
+
+        // 每20秒检查KeepAliveService是否存活（工作线程，不影响UI）
         pingRunnable = object : Runnable {
             override fun run() {
-                KeepAliveService.start(this@DaemonService)
-                handler.postDelayed(this, 15000)
+                // 加冷却判断，避免无限循环启动
+                if (AppState.canStartKeepAlive()) {
+                    KeepAliveService.start(this@DaemonService)
+                }
+                handler?.postDelayed(this, 20000) // 20秒检查一次
             }
         }
-        handler.postDelayed(pingRunnable!!, 5000)
+        handler?.postDelayed(pingRunnable!!, 5000) // 首次5秒后检查
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification())
-        // 同时启动KeepAliveService
-        KeepAliveService.start(this)
+        // 启动KeepAliveService时加冷却判断
+        if (AppState.canStartKeepAlive()) {
+            KeepAliveService.start(this)
+        }
         return START_STICKY
     }
 
@@ -78,10 +100,13 @@ class DaemonService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         Log.w(TAG, "Daemon destroyed - restarting both services")
-        pingRunnable?.let { handler.removeCallbacks(it) }
+        pingRunnable?.let { handler?.removeCallbacks(it) }
+        handlerThread?.quitSafely()
         scheduleRestart()
-        // 立即重启KeepAliveService
-        KeepAliveService.start(this)
+        // 立即重启KeepAliveService（加冷却判断）
+        if (AppState.canStartKeepAlive()) {
+            KeepAliveService.start(this)
+        }
     }
 
     private fun scheduleRestart() {
