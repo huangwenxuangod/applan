@@ -13,6 +13,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -21,6 +22,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.applan.R
 import com.applan.network.ChatMessage
+import com.applan.network.GrantPlanResult
 import kotlinx.coroutines.isActive
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -30,14 +32,14 @@ fun ChatScreen(
     onLockScreen: () -> Unit = {},
     onExitApp: () -> Unit = {},
     onSettingsClick: () -> Unit,
-    onEmergencyUnlock: () -> Unit = {}
+    onEmergencyUnlock: () -> Unit = {},
+    onGrantPlan: ((GrantPlanResult) -> Unit)? = null
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val listState = rememberLazyListState()
     val context = LocalContext.current
     var inputText by remember { mutableStateOf("") }
 
-    // 错误Toast
     val errorEvent by viewModel.errorEvent.collectAsState()
     LaunchedEffect(errorEvent) {
         errorEvent?.let { msg ->
@@ -46,8 +48,6 @@ fun ChatScreen(
         }
     }
 
-    // 自动滚动到底部（流式输出时，仅当用户在底部附近时）
-    // 修复：不用animateScrollToItem（每token触发动画导致卡顿），改用scrollToItem
     LaunchedEffect(uiState.messages.size, uiState.currentReply) {
         val totalItems = uiState.messages.size + if (uiState.currentReply.isNotEmpty()) 1 else 0
         if (totalItems > 0) {
@@ -100,12 +100,13 @@ fun ChatScreen(
                     .imePadding()
                     .navigationBarsPadding(),
                 color = MaterialTheme.colorScheme.surface,
-                tonalElevation = 2.dp
+                tonalElevation = 2.dp,
+                shadowElevation = 8.dp
             ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.Bottom
                 ) {
                     OutlinedTextField(
@@ -118,7 +119,7 @@ fun ChatScreen(
                         shape = RoundedCornerShape(24.dp),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = MaterialTheme.colorScheme.primary,
-                            unfocusedBorderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
+                            unfocusedBorderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f),
                         ),
                         maxLines = 4,
                         enabled = !uiState.isStreaming
@@ -132,7 +133,8 @@ fun ChatScreen(
                                 viewModel.sendMessage(
                                     text = text,
                                     onLockScreen = onLockScreen,
-                                    onExitApp = onExitApp
+                                    onExitApp = onExitApp,
+                                    onGrantPlan = onGrantPlan
                                 )
                             }
                         },
@@ -187,10 +189,9 @@ fun ChatScreen(
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    // 修复：给每个message加key，避免不必要的recomposition
                     items(
                         items = uiState.messages,
                         key = { msg -> msg.id }
@@ -198,7 +199,8 @@ fun ChatScreen(
                         when (msg.role) {
                             "user" -> UserBubble(text = msg.content)
                             "assistant" -> AiBubble(text = msg.content)
-                            "tool" -> {} // tool消息不显示
+                            "system" -> SystemBubble(text = msg.content)
+                            "tool" -> {}
                         }
                     }
 
@@ -223,7 +225,7 @@ fun ChatScreen(
                                     modifier = Modifier
                                         .clip(RoundedCornerShape(16.dp, 16.dp, 16.dp, 4.dp))
                                         .background(MaterialTheme.colorScheme.surfaceVariant)
-                                        .padding(12.dp)
+                                        .padding(horizontal = 14.dp, vertical = 12.dp)
                                 ) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         CircularProgressIndicator(
@@ -242,6 +244,10 @@ fun ChatScreen(
                             }
                         }
                     }
+
+                    item(key = "bottom_spacer") {
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
                 }
             }
         }
@@ -251,7 +257,7 @@ fun ChatScreen(
 @Composable
 fun UserBubble(text: String) {
     Row(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.End
     ) {
         Surface(
@@ -261,7 +267,7 @@ fun UserBubble(text: String) {
         ) {
             Text(
                 text = text,
-                modifier = Modifier.padding(12.dp),
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
                 color = MaterialTheme.colorScheme.onPrimary,
                 fontSize = 15.sp,
                 lineHeight = 22.sp
@@ -270,9 +276,6 @@ fun UserBubble(text: String) {
     }
 }
 
-/**
- * AiBubble - 用remember稳定text引用，减少不必要重组
- */
 @Composable
 fun AiBubble(text: String, isStreaming: Boolean = false) {
     Row(
@@ -283,7 +286,7 @@ fun AiBubble(text: String, isStreaming: Boolean = false) {
             modifier = Modifier
                 .size(32.dp)
                 .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                .background(MaterialTheme.colorScheme.surfaceVariant),
             contentAlignment = Alignment.Center
         ) {
             Text("🔒", fontSize = 14.sp)
@@ -294,8 +297,7 @@ fun AiBubble(text: String, isStreaming: Boolean = false) {
             color = MaterialTheme.colorScheme.surfaceVariant,
             modifier = Modifier.widthIn(max = 280.dp)
         ) {
-            Row(modifier = Modifier.padding(12.dp)) {
-                // 用key确保text变化时只重组Text部分
+            Row(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
                 Text(
                     text = text,
                     color = MaterialTheme.colorScheme.onSurface,
@@ -310,9 +312,40 @@ fun AiBubble(text: String, isStreaming: Boolean = false) {
     }
 }
 
-/**
- * 独立的闪烁光标组件，避免触发父级重组
- */
+@Composable
+fun SystemBubble(text: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.Center
+    ) {
+        Surface(
+            shape = RoundedCornerShape(10.dp),
+            color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.6f),
+            modifier = Modifier.fillMaxWidth(0.9f)
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "⚠️",
+                    fontSize = 16.sp,
+                    modifier = Modifier.padding(end = 8.dp)
+                )
+                Text(
+                    text = text.replace("[系统：", "").replace("]", ""),
+                    color = MaterialTheme.colorScheme.error,
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun BlinkingCursor() {
     var visible by remember { mutableStateOf(true) }
@@ -322,14 +355,14 @@ private fun BlinkingCursor() {
             kotlinx.coroutines.delay(530)
         }
     }
-    // 用animateFloatAsState让透明度平滑变化，避免硬闪烁
     val alpha by animateFloatAsState(
         targetValue = if (visible) 1f else 0f,
         label = "cursor"
     )
     Text(
         text = "|",
-        color = MaterialTheme.colorScheme.primary.copy(alpha = alpha),
-        fontSize = 15.sp
+        color = MaterialTheme.colorScheme.primary,
+        fontSize = 15.sp,
+        modifier = Modifier.alpha(alpha)
     )
 }

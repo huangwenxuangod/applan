@@ -1,21 +1,26 @@
 package com.applan.ui.chat
 
 import android.app.Application
+import android.content.Context
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.applan.network.ChatMessage
 import com.applan.network.ApplanClient
+import com.applan.network.ChatMessage
+import com.applan.network.GrantPlanResult
 import com.applan.network.StreamEvent
 import com.applan.network.ToolCall
 import com.applan.util.AppConfig
+import com.applan.util.AppPackageResolver
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 
 data class ChatUiState(
     val messages: List<ChatMessage> = emptyList(),
@@ -29,7 +34,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     companion object {
         private const val TAG = "ChatVM"
-        // UI批量更新间隔：每收到多少个字符更新一次UI，减少recomposition频率
         private const val UI_UPDATE_INTERVAL_CHARS = 3
     }
 
@@ -39,14 +43,21 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val _errorEvent = MutableStateFlow<String?>(null)
     val errorEvent: StateFlow<String?> = _errorEvent.asStateFlow()
 
-    // 使用Application context创建ApplanClient，避免内存泄漏
     private val hermesClient = ApplanClient(application.applicationContext).apply {
-        // 初始化时从AppConfig读取配置
         updateConfig(AppConfig.getServerUrl(), AppConfig.getApiKey())
     }
     private val messageHistory = mutableListOf<ChatMessage>()
+    private var streamJob: Job? = null
 
-    // 全局协程异常处理器 - 防止任何未捕获异常崩溃App
+    @Volatile
+    private var pendingSystemMessage: String? = null
+    @Volatile
+    private var pendingLock: (() -> Unit)? = null
+    @Volatile
+    private var pendingExit: (() -> Unit)? = null
+    @Volatile
+    private var pendingGrant: ((GrantPlanResult) -> Unit)? = null
+
     private val exceptionHandler = CoroutineExceptionHandler { _, e ->
         Log.e(TAG, "Coroutine error", e)
         viewModelScope.launch(Dispatchers.Main.immediate) {
@@ -60,22 +71,33 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     fun updateConfig(serverUrl: String, apiKey: String) {
         hermesClient.updateConfig(serverUrl, apiKey)
-        // 同步保存到AppConfig
         AppConfig.saveServerUrl(serverUrl)
         AppConfig.saveApiKey(apiKey)
+    }
+
+    fun provideContext(context: Context) {
+        hermesClient.provideContext(context)
     }
 
     fun isConfigured(): Boolean = hermesClient.isConfigured()
 
     fun resetConversation() {
+        streamJob?.cancel()
+        streamJob = null
         messageHistory.clear()
+        pendingSystemMessage = null
+        pendingLock = null
+        pendingExit = null
+        pendingGrant = null
         _uiState.value = ChatUiState(showGreeting = true)
+        _errorEvent.value = null
     }
 
     fun sendMessage(
         text: String,
         onLockScreen: () -> Unit,
-        onExitApp: () -> Unit
+        onExitApp: () -> Unit,
+        onGrantPlan: ((GrantPlanResult) -> Unit)? = null
     ) {
         if (_uiState.value.isStreaming) return
         if (text.isBlank()) return
@@ -89,16 +111,53 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             showGreeting = false
         )
 
-        // 网络请求在IO线程执行
         viewModelScope.launch(exceptionHandler + Dispatchers.IO) {
-            runChatLoop(onLockScreen, onExitApp)
+            runChatLoop(onLockScreen, onExitApp, onGrantPlan)
+        }
+    }
+
+    fun triggerViolationChallenge(
+        systemMessage: String,
+        onLockScreen: () -> Unit,
+        onExitApp: () -> Unit,
+        onGrantPlan: ((GrantPlanResult) -> Unit)? = null
+    ) {
+        if (_uiState.value.isStreaming) {
+            Log.d(TAG, "Already streaming, ignoring violation trigger")
+            return
+        }
+        pendingSystemMessage = systemMessage
+        pendingLock = onLockScreen
+        pendingExit = onExitApp
+        pendingGrant = onGrantPlan
+        Log.d(TAG, "Queued violation challenge: ${systemMessage.take(50)}")
+
+        if (_errorEvent.value != null) {
+            checkAndRunPending()
+        } else {
+            _uiState.value = _uiState.value.copy(
+                currentReply = "",
+                isStreaming = true,
+                isConnecting = true,
+                showGreeting = false
+            )
+            streamJob = viewModelScope.launch(exceptionHandler + Dispatchers.IO) {
+                runChatLoop(onLockScreen, onExitApp, onGrantPlan)
+            }
         }
     }
 
     private suspend fun runChatLoop(
         onLockScreen: () -> Unit,
-        onExitApp: () -> Unit
+        onExitApp: () -> Unit,
+        onGrantPlan: ((GrantPlanResult) -> Unit)? = null
     ) {
+        val pending = pendingSystemMessage
+        if (pending != null) {
+            messageHistory.add(ChatMessage(role = "system", content = pending))
+            pendingSystemMessage = null
+        }
+
         var shouldLoop = true
         while (shouldLoop) {
             shouldLoop = false
@@ -107,6 +166,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             var charsSinceLastUpdate = 0
             var exitAfterStream = false
             var lockAfterStream = false
+            var grantAfterStream: GrantPlanResult? = null
 
             try {
                 hermesClient.chatStream(messageHistory.toList()).collect { event ->
@@ -114,13 +174,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         is StreamEvent.Content -> {
                             fullReply.append(event.text)
                             charsSinceLastUpdate += event.text.length
-                            // 性能优化：批量更新UI，每N个字符才更新一次，减少recomposition
-                            // 第一个字符立即更新显示"正在输入"状态，之后批量更新
                             val shouldUpdate = charsSinceLastUpdate >= UI_UPDATE_INTERVAL_CHARS ||
                                     fullReply.length == event.text.length
                             if (shouldUpdate) {
                                 charsSinceLastUpdate = 0
-                                // 切换到Main线程更新UI状态
                                 withContext(Dispatchers.Main.immediate) {
                                     val state = _uiState.value
                                     _uiState.value = state.copy(
@@ -140,7 +197,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                             val replyText = fullReply.toString()
                             val calls = toolCalls.values.toList()
 
-                            // 确保最终回复显示完整，在Main线程处理
                             withContext(Dispatchers.Main.immediate) {
                                 if (calls.isNotEmpty()) {
                                     messageHistory.add(
@@ -175,6 +231,28 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                                                     )
                                                 )
                                             }
+                                            "grant_plan" -> {
+                                                val result = parseGrantPlanArgs(tc.arguments.toString(), getApplication())
+                                                if (result != null) {
+                                                    grantAfterStream = result
+                                                    messageHistory.add(
+                                                        ChatMessage(
+                                                            role = "tool",
+                                                            content = """{"success": true, "plan": "${result.planDescription}", "apps": ${result.appNames}, "timeout": ${result.timeoutMinutes}}""",
+                                                            toolCallId = tc.id
+                                                        )
+                                                    )
+                                                } else {
+                                                    hasContinue = true
+                                                    messageHistory.add(
+                                                        ChatMessage(
+                                                            role = "tool",
+                                                            content = """{"error": "无法解析计划参数，请提供具体的app名称列表"}""",
+                                                            toolCallId = tc.id
+                                                        )
+                                                    )
+                                                }
+                                            }
                                             else -> {
                                                 hasContinue = true
                                                 messageHistory.add(
@@ -198,6 +276,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                                             )
                                         }
                                         lockAfterStream -> {
+                                            _uiState.value = _uiState.value.copy(
+                                                currentReply = replyText,
+                                                messages = messageHistory.toList(),
+                                                isStreaming = false,
+                                                isConnecting = false
+                                            )
+                                        }
+                                        grantAfterStream != null -> {
                                             _uiState.value = _uiState.value.copy(
                                                 currentReply = replyText,
                                                 messages = messageHistory.toList(),
@@ -229,8 +315,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                                 }
                             }
 
-                            // 在withContext外面处理回调，避免return@collect在withContext内无效
-                            // 回调操作Activity，需要切换到Main线程
                             if (exitAfterStream) {
                                 withContext(Dispatchers.Main.immediate) {
                                     kotlinx.coroutines.delay(400)
@@ -245,6 +329,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                                 }
                                 return@collect
                             }
+                            if (grantAfterStream != null) {
+                                val result = grantAfterStream!!
+                                withContext(Dispatchers.Main.immediate) {
+                                    kotlinx.coroutines.delay(400)
+                                    onGrantPlan?.invoke(result)
+                                }
+                                return@collect
+                            }
                         }
                         is StreamEvent.Error -> {
                             withContext(Dispatchers.Main.immediate) {
@@ -253,6 +345,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                                     isStreaming = false,
                                     isConnecting = false
                                 )
+                            }
+                            if (pendingSystemMessage != null) {
+                                checkAndRunPending()
+                                return@collect
                             }
                         }
                     }
@@ -267,6 +363,60 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
             }
+        }
+    }
+
+    private fun parseGrantPlanArgs(argsJson: String, context: Context): GrantPlanResult? {
+        return try {
+            val json = JSONObject(argsJson)
+            val appsArray = json.optJSONArray("apps") ?: return null
+            val plan = json.optString("plan", "")
+            val timeoutMinutes = json.optInt("timeout_minutes", 15)
+
+            val appNames = mutableListOf<String>()
+            for (i in 0 until appsArray.length()) {
+                appNames.add(appsArray.getString(i))
+            }
+
+            val (packages, unresolved) = AppPackageResolver.resolveAppNames(context, appNames)
+            GrantPlanResult(
+                planDescription = plan,
+                appNames = appNames,
+                resolvedPackages = packages,
+                unresolvedApps = unresolved,
+                timeoutMinutes = timeoutMinutes.coerceIn(1, 60)
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to parse grant_plan args: $argsJson", e)
+            null
+        }
+    }
+
+    private fun checkAndRunPending() {
+        val pending = pendingSystemMessage
+        val lock = pendingLock
+        val exit = pendingExit
+        if (pending != null && lock != null && exit != null) {
+            val grant = pendingGrant
+            pendingSystemMessage = null
+            pendingLock = null
+            pendingExit = null
+            pendingGrant = null
+            Log.d(TAG, "Running pending violation system message: ${pending.take(50)}")
+            _uiState.value = _uiState.value.copy(
+                currentReply = "",
+                isStreaming = true,
+                isConnecting = true,
+                showGreeting = false
+            )
+            streamJob = viewModelScope.launch(exceptionHandler + Dispatchers.IO) {
+                runChatLoop(lock, exit, grant)
+            }
+        } else {
+            pendingSystemMessage = null
+            pendingLock = null
+            pendingExit = null
+            pendingGrant = null
         }
     }
 

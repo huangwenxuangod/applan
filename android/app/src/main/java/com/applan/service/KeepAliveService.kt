@@ -6,8 +6,10 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
@@ -43,6 +45,7 @@ class KeepAliveService : Service() {
     companion object {
         private const val TAG = "KeepAlive"
         private const val NOTIFICATION_ID = 10001
+        private const val CHECK_INTERVAL_MS = 5000L
 
         fun start(context: Context) {
             // 性能优化：加启动冷却，防止短时间内重复启动
@@ -56,6 +59,25 @@ class KeepAliveService : Service() {
                 Log.e(TAG, "Failed to start", e)
             }
         }
+
+        fun bringToForeground(context: Context, reason: String = "check") {
+            try {
+                val intent = Intent(context, MainActivity::class.java).apply {
+                    addFlags(
+                        Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                        Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
+                        Intent.FLAG_ACTIVITY_CLEAR_TOP
+                    )
+                    putExtra("auto_launch", true)
+                    putExtra("launch_reason", reason)
+                }
+                context.startActivity(intent)
+                Log.d(TAG, "bringToForeground: $reason")
+            } catch (e: Exception) {
+                Log.e(TAG, "bringToForeground failed: $reason", e)
+            }
+        }
     }
 
     // 性能优化：使用工作线程Handler，不占用主线程
@@ -63,6 +85,7 @@ class KeepAliveService : Service() {
     private var handler: Handler? = null
     private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
     private var checkRunnable: Runnable? = null
+    private var screenReceiver: BroadcastReceiver? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -109,7 +132,8 @@ class KeepAliveService : Service() {
                 handler?.postDelayed(this, nextInterval)
             }
         }
-        handler?.postDelayed(checkRunnable!!, 5000) // 首次5秒后检查
+        handler?.post(checkRunnable!!)
+        registerScreenReceiver()
     }
 
     /**
@@ -120,7 +144,6 @@ class KeepAliveService : Service() {
         try {
             val a11yEnabled = PermissionHelper.isAccessibilityEnabled(this)
             val overlayEnabled = PermissionHelper.canDrawOverlays(this)
-            val batteryOk = PermissionHelper.isIgnoringBatteryOptimizations(this)
 
             if (!a11yEnabled || !overlayEnabled) {
                 Log.w(TAG, "Strict mode: critical permission revoked! a11y=$a11yEnabled, overlay=$overlayEnabled")
@@ -165,24 +188,17 @@ class KeepAliveService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    /**
-     * 用户从最近任务列表划掉App时触发
-     * 核心狠招：立即拉起自己+MainActivity
-     */
     override fun onTaskRemoved(rootIntent: Intent?) {
         Log.w(TAG, "onTaskRemoved - app was swiped away, restarting everything!")
-        // 立即重启MainActivity
         try {
             launchMainActivity()
         } catch (e: Exception) {
             Log.e(TAG, "Failed to restart MainActivity on task removed", e)
         }
-        // 立即重启自己
         try {
             val restartService = Intent(this, KeepAliveService::class.java)
             ContextCompat.startForegroundService(this, restartService)
         } catch (_: Exception) {}
-        // AlarmManager兜底
         scheduleRestart(100)
         super.onTaskRemoved(rootIntent)
     }
@@ -191,18 +207,45 @@ class KeepAliveService : Service() {
         super.onDestroy()
         Log.w(TAG, "KeepAlive destroyed - scheduling restart")
         checkRunnable?.let { handler?.removeCallbacks(it) }
+        screenReceiver?.let {
+            try { unregisterReceiver(it) } catch (_: Exception) {}
+            screenReceiver = null
+        }
         handlerThread?.quitSafely()
-        // 被销毁时立即重启
         scheduleRestart(500)
-        // 立即启动DaemonService（加冷却判断）
         if (AppState.canStartDaemon()) {
             DaemonService.start(this)
         }
     }
 
-    /**
-     * 用AlarmManager安排重启，即使App进程被杀也能拉起
-     */
+    private fun registerScreenReceiver() {
+        if (screenReceiver != null) return
+        screenReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) {
+                val action = intent.action
+                Log.d(TAG, "Screen event: $action")
+                if (action == Intent.ACTION_SCREEN_ON || action == Intent.ACTION_USER_PRESENT) {
+                    handler?.postDelayed({
+                        if (AppState.shouldBlock()) {
+                            bringToForeground(context, "screen_on")
+                        }
+                    }, 200)
+                }
+            }
+        }
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_ON)
+            addAction(Intent.ACTION_SCREEN_OFF)
+            addAction(Intent.ACTION_USER_PRESENT)
+        }
+        try {
+            registerReceiver(screenReceiver, filter)
+            Log.d(TAG, "Screen receiver registered")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to register screen receiver", e)
+        }
+    }
+
     private fun scheduleRestart(delayMs: Long = 300) {
         try {
             val restartIntent = Intent(this, KeepAliveService::class.java)
@@ -220,7 +263,6 @@ class KeepAliveService : Service() {
             Log.d(TAG, "Restart scheduled in ${delayMs}ms")
         } catch (e: Exception) {
             Log.e(TAG, "Schedule restart failed", e)
-            // 直接尝试启动
             try { start(this) } catch (_: Exception) {}
         }
     }
@@ -236,6 +278,7 @@ class KeepAliveService : Service() {
                     setShowBadge(false)
                     enableVibration(false)
                     setSound(null, null)
+                    setLockscreenVisibility(Notification.VISIBILITY_PRIVATE)
                 }
                 nm.createNotificationChannel(channel)
             }

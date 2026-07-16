@@ -2,6 +2,7 @@ package com.applan.ui
 
 import android.app.Activity
 import android.content.Context
+import android.util.Log
 import android.view.Gravity
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -16,7 +17,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.applan.BuildConfig
-import com.applan.network.ApplanClient
+import com.applan.network.GrantPlanResult
 import com.applan.service.BlockOverlay
 import com.applan.service.KeepAliveService
 import com.applan.service.LockAccessibilityService
@@ -26,13 +27,17 @@ import com.applan.ui.emergency.EmergencyUnlockScreen
 import com.applan.ui.onboarding.OnboardingScreen
 import com.applan.ui.settings.SettingsScreen
 import com.applan.ui.theme.ApplanTheme
+import com.applan.util.AccessPlan
 import com.applan.util.AppConfig
+import com.applan.util.AppPackageResolver
 import com.applan.util.AppState
 import com.applan.util.AppUpdateManager
 import com.applan.util.CrashHandler
+import com.applan.util.ViolationRecord
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicBoolean
 
 sealed class Screen {
     object Onboarding : Screen()
@@ -44,8 +49,7 @@ sealed class Screen {
 private const val PREFS_NAME = "appplan_prefs"
 private const val KEY_ONBOARDED = "has_completed_onboarding"
 
-@Volatile
-var needsResetOnResume = false
+private val needsResetOnResume = AtomicBoolean(false)
 
 private var chatViewModelRef: ChatViewModel? = null
 
@@ -55,16 +59,17 @@ val resetFlow = _resetFlow.asSharedFlow()
 fun resetChatConversation() {
     chatViewModelRef?.resetConversation()
     _resetFlow.tryEmit(Unit)
-    needsResetOnResume = false
+    needsResetOnResume.set(false)
 }
 
 fun markNeedsReset() {
-    needsResetOnResume = true
+    needsResetOnResume.set(true)
 }
 
-/**
- * 显示顶部Toast
- */
+fun consumeNeedsReset(): Boolean {
+    return needsResetOnResume.compareAndSet(true, false)
+}
+
 fun showTopToast(context: Context, message: String) {
     val toast = Toast.makeText(context, message, Toast.LENGTH_LONG)
     toast.setGravity(Gravity.TOP or Gravity.CENTER_HORIZONTAL, 0, 80)
@@ -81,7 +86,6 @@ fun ApplanApp(context: Context) {
             mutableStateOf(prefs.getBoolean(KEY_ONBOARDED, false))
         }
 
-        // 从AppConfig加载服务器配置
         val serverUrl = AppConfig.getServerUrl()
         val apiKey = AppConfig.getApiKey()
 
@@ -126,26 +130,10 @@ fun ApplanApp(context: Context) {
             }
         }
 
-        // 监听重置事件
         LaunchedEffect(Unit) {
             resetFlow.collect {
                 currentScreen = Screen.Chat
             }
-        }
-
-        // 监听错误事件 → 顶部Toast
-        LaunchedEffect(Unit) {
-            chatViewModel.errorEvent.collect { error ->
-                if (error != null) {
-                    showTopToast(context, error)
-                    chatViewModel.dismissError()
-                }
-            }
-        }
-
-        DisposableEffect(Unit) {
-            chatViewModelRef = chatViewModel
-            onDispose { chatViewModelRef = null }
         }
 
         // 崩溃报告对话框
@@ -194,7 +182,6 @@ fun ApplanApp(context: Context) {
             )
         }
 
-        // 更新对话框
         showUpdateDialog?.let { update ->
             AlertDialog(
                 onDismissRequest = { showUpdateDialog = null },
@@ -289,9 +276,53 @@ fun ApplanApp(context: Context) {
         }
 
         fun goToSettings() {
-            // 跳设置前开启宽限期，无障碍服务不拦截
             AppState.startSettingsSession()
             currentScreen = Screen.Settings
+        }
+
+        fun handleViolation(record: ViolationRecord) {
+            Log.d("ApplanApp", "Violation detected: ${record.appName} (${record.packageName})")
+            if (AppConfig.isExitGranted()) return
+
+            markNeedsReset()
+            currentScreen = Screen.Chat
+            KeepAliveService.bringToForeground(context, "violation_${record.packageName}")
+            showTopToast(context, "检测到偏离计划：${record.appName}")
+        }
+
+        fun handleGrantPlan(result: GrantPlanResult) {
+            Log.d("ApplanApp", "Grant plan: ${result.planDescription}, apps=${result.appNames}")
+            if (result.resolvedPackages.isEmpty()) {
+                showTopToast(context, "无法识别计划中的App：${result.unresolvedApps.joinToString(", ")}")
+                return
+            }
+            if (result.unresolvedApps.isNotEmpty()) {
+                showTopToast(context, "部分App未识别：${result.unresolvedApps.joinToString(", ")}，仅放行已识别的App")
+            }
+            val timeoutMs = result.timeoutMinutes.coerceIn(1, 60) * 60 * 1000L
+            val plan = AccessPlan(
+                allowedPackages = result.resolvedPackages.toMutableSet(),
+                allowedAppNames = result.appNames.toMutableList(),
+                planDescription = result.planDescription,
+                timeoutAt = System.currentTimeMillis() + timeoutMs
+            )
+            AppState.grantByPlan(plan)
+            BlockOverlay.hide()
+            markNeedsReset()
+            showTopToast(context, "计划放行：${result.planDescription}，${result.timeoutMinutes}分钟")
+        }
+
+        DisposableEffect(Unit) {
+            chatViewModelRef = chatViewModel
+            AppState.onViolationDetected = { record ->
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    handleViolation(record)
+                }
+            }
+            onDispose {
+                chatViewModelRef = null
+                AppState.onViolationDetected = null
+            }
         }
 
         Surface(
@@ -312,7 +343,8 @@ fun ApplanApp(context: Context) {
                         onLockScreen = { handleLockScreen() },
                         onExitApp = { handleExitApp() },
                         onSettingsClick = { goToSettings() },
-                        onEmergencyUnlock = { currentScreen = Screen.EmergencyUnlock }
+                        onEmergencyUnlock = { currentScreen = Screen.EmergencyUnlock },
+                        onGrantPlan = { result -> handleGrantPlan(result) }
                     )
                     is Screen.Settings -> SettingsScreen(
                         onBack = {
@@ -320,7 +352,6 @@ fun ApplanApp(context: Context) {
                             currentScreen = Screen.Chat
                         },
                         onBeforeOpenSettings = {
-                            // 跳系统设置前开启宽限期
                             AppState.startSettingsSession()
                         },
                         onEmergencyUnlock = { currentScreen = Screen.EmergencyUnlock },

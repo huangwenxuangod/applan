@@ -7,44 +7,36 @@ import android.util.Log
 import com.applan.MainActivity
 import com.applan.util.AppState
 
-class BootReceiver : BroadcastReceiver() {
+class ScreenReceiver : BroadcastReceiver() {
 
     companion object {
-        private const val TAG = "BootReceiver"
+        private const val TAG = "ScreenReceiver"
     }
 
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.action
         Log.d(TAG, "Received: $action")
 
-        val isBoot = action == Intent.ACTION_BOOT_COMPLETED ||
-                action == Intent.ACTION_LOCKED_BOOT_COMPLETED
-
-        if (isBoot) {
-            try {
-                KeepAliveService.start(context)
-                DaemonService.start(context)
-                Log.d(TAG, "Services started after boot")
-
-                AppState.resetGrant()
-
+        if (action == Intent.ACTION_USER_PRESENT) {
+            if (AppState.shouldBlock()) {
+                Log.d(TAG, "USER_PRESENT - user unlocked, pulling up applan immediately")
                 try {
                     val activityIntent = Intent(context, MainActivity::class.java).apply {
                         addFlags(
                             Intent.FLAG_ACTIVITY_NEW_TASK or
                             Intent.FLAG_ACTIVITY_CLEAR_TOP or
-                            Intent.FLAG_ACTIVITY_SINGLE_TOP
+                            Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                            Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
                         )
                         putExtra("auto_launch", true)
-                        putExtra("boot_triggered", true)
+                        putExtra("unlock_triggered", true)
                     }
                     context.startActivity(activityIntent)
-                    Log.d(TAG, "MainActivity launched from boot receiver")
                 } catch (e: Exception) {
-                    Log.e(TAG, "Failed to launch MainActivity on boot (expected on locked screen)", e)
+                    Log.e(TAG, "Failed to launch on USER_PRESENT", e)
                 }
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to start services on boot", e)
+            } else {
+                Log.d(TAG, "USER_PRESENT - not blocking, no action needed")
             }
         }
     }

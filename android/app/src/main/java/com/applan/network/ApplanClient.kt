@@ -7,12 +7,9 @@ import android.util.Log
 import com.applan.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
-import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
-import kotlinx.coroutines.flow.retryWhen
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -28,12 +25,12 @@ import java.net.ConnectException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
-class ApplanClient(private val context: Context? = null) {
+class ApplanClient(private var context: Context? = null) {
 
     companion object {
         private const val TAG = "ApplanClient"
-        private const val MAX_RETRY = 2
     }
 
     @Volatile
@@ -41,10 +38,14 @@ class ApplanClient(private val context: Context? = null) {
     @Volatile
     private var apiKey: String = BuildConfig.API_KEY
 
+    fun provideContext(ctx: Context) {
+        context = ctx.applicationContext
+    }
+
     private val client: OkHttpClient by lazy {
         OkHttpClient.Builder()
             .connectTimeout(30, TimeUnit.SECONDS)
-            .readTimeout(300, TimeUnit.SECONDS)  // SSE长连接，5分钟
+            .readTimeout(300, TimeUnit.SECONDS)
             .writeTimeout(30, TimeUnit.SECONDS)
             .pingInterval(30, TimeUnit.SECONDS)  // 30秒心跳检测死连接
             .retryOnConnectionFailure(true)      // 自动重试连接失败
@@ -97,7 +98,7 @@ class ApplanClient(private val context: Context? = null) {
         }
 
         val url = "$serverUrl/v1/chat/completions"
-        Log.d(TAG, "Connecting to: $url")
+        Log.d(TAG, "Connecting to chat endpoint")
 
         val toolsArray = JSONArray().apply {
             put(JSONObject().apply {
@@ -115,10 +116,37 @@ class ApplanClient(private val context: Context? = null) {
                 put("type", "function")
                 put("function", JSONObject().apply {
                     put("name", "exit_app")
-                    put("description", "放行用户，退出applan回到桌面。只有当用户通过了全部五层消解漏斗检查：1)不是语言陷阱 2)不是错误假设 3)没有逻辑错误 4)事实可验证 5)信息充分，意图指向一个具体的、可验证的、有产出的行动时才调用。用户说'退出''让我走''我就用一下'等任何主动要求退出的话都绝对不放行。")
+                    put("description", "放行用户，退出applan回到桌面。只有当用户通过了全部五层消解漏斗检查：1)不是语言陷阱 2)不是错误假设 3)没有逻辑错误 4)事实可验证 5)信息充分，意图指向一个具体的、可验证的、有产出的单步行动时才调用。单步简单任务（如'接电话'）用exit_app。用户说'退出''让我走''我就用一下'等任何主动要求退出的话都绝对不放行。")
                     put("parameters", JSONObject().apply {
                         put("type", "object")
                         put("properties", JSONObject())
+                    })
+                })
+            })
+            put(JSONObject().apply {
+                put("type", "function")
+                put("function", JSONObject().apply {
+                    put("name", "grant_plan")
+                    put("description", "放行用户执行一个具体的多步计划。当用户说明了要按顺序访问多个App完成特定任务时调用此工具（而非exit_app）。例如用户说'先去微信回客户消息，然后去飞书看项目文档'，调用grant_plan，apps=['微信','飞书']。只有当用户的计划通过了五层消解漏斗、每一步都具体可验证、且涉及2个及以上App时才调用。单步简单任务仍使用exit_app。调用后客户端会持续监听用户实际打开的App，如果打开了不在apps列表中的App，会自动拉回来让你质问。")
+                    put("parameters", JSONObject().apply {
+                        put("type", "object")
+                        put("properties", JSONObject().apply {
+                            put("apps", JSONObject().apply {
+                                put("type", "array")
+                                put("items", JSONObject().apply { put("type", "string") })
+                                put("description", "用户计划中要用到的App名称列表，使用中文常用名，如['微信','飞书','Chrome']。只包含用户明确提到要使用的App。")
+                            })
+                            put("plan", JSONObject().apply {
+                                put("type", "string")
+                                put("description", "用户声称要执行的具体计划的一句话概括，如'先微信回张总合同消息，再飞书查看Q3项目文档'")
+                            })
+                            put("timeout_minutes", JSONObject().apply {
+                                put("type", "integer")
+                                put("description", "计划预计需要的时间（分钟），超时自动锁屏。默认15分钟，根据任务复杂度估算，最长60分钟。")
+                                put("default", 15)
+                            })
+                        })
+                        put("required", JSONArray().apply { put("apps"); put("plan") })
                     })
                 })
             })
@@ -161,6 +189,7 @@ class ApplanClient(private val context: Context? = null) {
             put("model", "deepseek-chat")
             put("messages", messagesArray)
             put("stream", true)
+            put("temperature", 0.4)
             put("tools", toolsArray)
             put("tool_choice", "auto")
         }.toString()
@@ -177,12 +206,14 @@ class ApplanClient(private val context: Context? = null) {
         }
 
         val request = requestBuilder.build()
+        val streamEnded = AtomicBoolean(false)
 
         val eventSourceListener = object : EventSourceListener() {
             override fun onOpen(eventSource: EventSource, response: Response) {
                 Log.d(TAG, "SSE connection opened, code=${response.code}")
                 if (!response.isSuccessful) {
-                    val errMsg = "服务器返回错误: HTTP ${response.code}${response.message?.let { " - $it" } ?: ""}"
+                    response.close()
+                    val errMsg = "服务器返回错误: HTTP ${response.code} - ${response.message}"
                     trySend(StreamEvent.Error(errMsg))
                     close()
                 }
@@ -190,14 +221,18 @@ class ApplanClient(private val context: Context? = null) {
 
             override fun onEvent(eventSource: EventSource, id: String?, type: String?, data: String) {
                 if (data == "[DONE]") {
-                    trySend(StreamEvent.StreamEnd)
+                    if (streamEnded.compareAndSet(false, true)) {
+                        trySend(StreamEvent.StreamEnd)
+                    }
                     close()
                     return
                 }
                 try {
                     val json = JSONObject(data)
-                    val choices = json.optJSONArray("choices") ?: return
-                    if (choices.length() == 0) return
+                    val choices = json.optJSONArray("choices")
+                    if (choices == null || choices.length() == 0) {
+                        return
+                    }
                     val choice = choices.getJSONObject(0)
                     val delta = choice.optJSONObject("delta") ?: return
 
@@ -218,22 +253,20 @@ class ApplanClient(private val context: Context? = null) {
                             trySend(StreamEvent.ToolCallDelta(index, tcId, name, args))
                         }
                     }
-
-                    val finishReason = if (choice.isNull("finish_reason")) null else choice.optString("finish_reason")
-                    if (finishReason == "stop" || finishReason == "tool_calls") {
-                        // wait for [DONE]
-                    }
                 } catch (e: Exception) {
-                    Log.w(TAG, "Failed to parse SSE event: ${e.message}, data: ${data.take(200)}")
+                    Log.w(TAG, "Failed to parse SSE event: ${e.message}")
                 }
             }
 
             override fun onClosed(eventSource: EventSource) {
-                trySend(StreamEvent.StreamEnd)
+                if (streamEnded.compareAndSet(false, true)) {
+                    trySend(StreamEvent.StreamEnd)
+                }
                 close()
             }
 
             override fun onFailure(eventSource: EventSource, t: Throwable?, response: Response?) {
+                response?.close()
                 val errorMsg = formatError(t, response)
                 Log.e(TAG, "SSE failure: $errorMsg", t)
                 trySend(StreamEvent.Error(errorMsg))
@@ -252,13 +285,14 @@ class ApplanClient(private val context: Context? = null) {
     private fun formatError(t: Throwable?, response: Response?): String {
         if (response != null && !response.isSuccessful) {
             val body = try { response.body?.string()?.take(200) } catch (_: Exception) { null }
+            response.close()
             return "服务器错误 (HTTP ${response.code})${body?.let { ": ${it.take(100)}" } ?: ""}"
         }
         return when (t) {
             is UnknownHostException ->
                 "无法连接服务器\nDNS解析失败，请检查：\n1. 服务器地址是否正确\n2. 手机是否能访问互联网\n3. 服务器是否在线\n当前地址: $serverUrl"
             is ConnectException ->
-                "连接被拒绝\n服务器($serverUrl)拒绝连接，请确认：\n1. applan 服务器已启动\n2. 端口8799已开放\n3. 防火墙/安全组已放行"
+                "连接被拒绝\n服务器($serverUrl)拒绝连接，请确认：\n1. applan 服务器已启动\n2. 端口${getPortFromUrl(serverUrl)}已开放\n3. 防火墙/安全组已放行"
             is SocketTimeoutException ->
                 "连接超时（服务器响应太慢）\n可能原因：\n1. 服务器负载过高\n2. 网络延迟大\n3. applan 服务器未完全启动\n请稍后重试，或检查服务器状态"
             is IOException -> {
@@ -273,6 +307,15 @@ class ApplanClient(private val context: Context? = null) {
             }
             null -> "连接失败: 未知错误，请检查网络"
             else -> "连接错误: ${t.javaClass.simpleName}: ${t.message?.take(200) ?: "未知"}"
+        }
+    }
+
+    private fun getPortFromUrl(url: String): String {
+        return try {
+            val uri = java.net.URI(url)
+            if (uri.port > 0) uri.port.toString() else if (uri.scheme == "https") "443" else "80"
+        } catch (_: Exception) {
+            "?"
         }
     }
 }

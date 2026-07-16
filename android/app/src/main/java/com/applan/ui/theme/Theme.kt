@@ -22,18 +22,24 @@ private val DarkColorScheme = darkColorScheme(
     onSurface = Color(0xFFE5E5E5),
     onSurfaceVariant = Color(0xFF888888),
     surfaceVariant = Color(0xFF252525),
+    errorContainer = Color(0xFF3D1A1A),
+    error = Color(0xFFFF6B6B),
+    onError = Color.White,
 )
 
 private val LightColorScheme = lightColorScheme(
-    primary = Color(0xFFE63946),
+    primary = Color(0xFFC1121F),
     onPrimary = Color.White,
-    secondary = Color(0xFFC1121F),
+    secondary = Color(0xFFE63946),
     background = Color(0xFFFAFAFA),
-    surface = Color.White,
+    surface = Color(0xFFFFFFFF),
     onBackground = Color(0xFF1A1A1A),
     onSurface = Color(0xFF1A1A1A),
-    onSurfaceVariant = Color(0xFF999999),
+    onSurfaceVariant = Color(0xFF666666),
     surfaceVariant = Color(0xFFF0F0F0),
+    errorContainer = Color(0xFFFFE5E5),
+    error = Color(0xFFC1121F),
+    onError = Color.White,
 )
 
 @Composable
@@ -50,6 +56,7 @@ fun ApplanTheme(
             window.statusBarColor = colorScheme.background.toArgb()
             window.navigationBarColor = colorScheme.background.toArgb()
             WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = !darkTheme
+            WindowCompat.getInsetsController(window, view).isAppearanceLightNavigationBars = !darkTheme
         }
     }
 

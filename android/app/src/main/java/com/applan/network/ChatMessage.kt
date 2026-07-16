@@ -27,3 +27,11 @@ sealed class StreamEvent {
     data class Error(val message: String) : StreamEvent()
     data object StreamEnd : StreamEvent()
 }
+
+data class GrantPlanResult(
+    val planDescription: String,
+    val appNames: List<String>,
+    val resolvedPackages: Set<String>,
+    val unresolvedApps: List<String>,
+    val timeoutMinutes: Int
+)
