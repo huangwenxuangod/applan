@@ -9,6 +9,7 @@ import android.view.WindowInsetsController
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.addCallback
 import androidx.core.view.WindowCompat
 import com.applan.service.BlockOverlay
 import com.applan.service.DaemonService
@@ -52,6 +53,23 @@ class MainActivity : ComponentActivity() {
         KeepAliveService.start(this)
         DaemonService.start(this)
         AppState.touch()
+
+        // 彻底拦截系统返回键：在Activity级别添加最低优先级回调，
+        // 禁用预测性返回的"再滑一次退出"动画提示。
+        // Compose内的BackHandler优先级更高（默认0），会先被调用，
+        // 处理Settings/Dashboard→Chat的返回。
+        // 当Compose没有消费（Chat/Onboarding页）时，这个兜底callback触发，
+        // 什么都不做，彻底吞掉返回事件，阻止finish()。
+        onBackPressedDispatcher.addCallback(
+            owner = this,
+            enabled = true
+        ) {
+            // 什么都不做，彻底吞掉
+        }.apply {
+            // 设置最低优先级，确保Compose BackHandler先处理
+            // 注意：OnBackPressedCallback没有直接的priority API，
+            // 但我们通过早注册+不拦截来让Compose的BackHandler（晚注册）先执行
+        }
 
         setContent {
             ApplanApp(context = this)

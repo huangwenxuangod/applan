@@ -172,15 +172,30 @@ fun ChatScreen(
                 .padding(padding)
         ) {
             if (uiState.messages.isEmpty() && !uiState.isConnecting && uiState.currentReply.isEmpty()) {
-                // 空状态：只显示锁图标，不主动说废话
+                // 空状态：欢迎界面
                 Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        "🔒",
-                        fontSize = 48.sp
-                    )
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            "🔒",
+                            fontSize = 48.sp,
+                            modifier = Modifier.padding(bottom = 16.dp)
+                        )
+                        Text(
+                            "applan",
+                            fontSize = 28.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onBackground
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            "告诉我你接下来要做什么",
+                            fontSize = 15.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             } else {
                 LazyColumn(

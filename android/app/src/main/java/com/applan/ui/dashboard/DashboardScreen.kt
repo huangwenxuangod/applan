@@ -2,8 +2,6 @@ package com.applan.ui.dashboard
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -17,16 +15,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.applan.ui.common.swipeToBack
 
 /**
  * 守护看板页面
  *
- * Phase 1: 使用模拟数据展示，后续接入Room本地数据库+UsageStatsManager
- * 设计参考：Android Digital Wellbeing + 不做手机控
- * 风格：冷峻数据感，让用户直面自己的"瘾"
+ * 设计原则：一屏看完，只放最关键的数据。
+ * Phase 1: 使用模拟数据，后续接入Room本地数据库+UsageStatsManager
  */
 
-// 模拟数据
 private data class StatCard(
     val emoji: String,
     val value: String,
@@ -41,12 +38,6 @@ private data class AppAttempt(
     val color: Color
 )
 
-private data class DayHeat(
-    val day: String,
-    val attempts: Int,
-    val isToday: Boolean = false
-)
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DashboardScreen(
@@ -56,8 +47,8 @@ fun DashboardScreen(
     val statCards = remember {
         listOf(
             StatCard("🔓", "12", "今日逃脱", Color(0xFFFF6B6B)),
-            StatCard("⏱", "3.2h", "今日守护", Color(0xFF4ECDC4)),
-            StatCard("🔥", "7", "连续天数", Color(0xFFFFA726)),
+            StatCard("⏱", "3.2h", "守护时长", Color(0xFF4ECDC4)),
+            StatCard("🔥", "7天", "连续", Color(0xFFFFA726)),
             StatCard("✅", "83%", "通过率", Color(0xFF66BB6A))
         )
     }
@@ -73,20 +64,13 @@ fun DashboardScreen(
     }
 
     val weekData = remember {
-        listOf(
-            DayHeat("一", 5),
-            DayHeat("二", 8),
-            DayHeat("三", 3),
-            DayHeat("四", 12),
-            DayHeat("五", 15),
-            DayHeat("六", 18),
-            DayHeat("日", 12, isToday = true)
-        )
+        listOf(5, 8, 3, 12, 15, 18, 12) // 周一到周日
     }
-
-    val maxAttempts = weekData.maxOf { it.attempts }
+    val weekLabels = listOf("一", "二", "三", "四", "五", "六", "日")
+    val maxAttempts = weekData.maxOrNull() ?: 1
 
     Scaffold(
+        modifier = Modifier.swipeToBack(onBack = onBack),
         topBar = {
             TopAppBar(
                 title = {
@@ -107,172 +91,127 @@ fun DashboardScreen(
         },
         containerColor = MaterialTheme.colorScheme.background
     ) { padding ->
-        LazyColumn(
+        Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+                .padding(padding)
+                .padding(horizontal = 16.dp, vertical = 4.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // 核心数据卡片组
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    statCards.forEach { card ->
-                        StatCardItem(card = card, modifier = Modifier.weight(1f))
-                    }
+            // === 核心数据卡片组 ===
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                statCards.forEach { card ->
+                    StatCardItem(card = card, modifier = Modifier.weight(1f))
                 }
             }
 
-            // 最近7天趋势
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                    )
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(
-                            "最近7天逃脱趋势",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(modifier = Modifier.height(16.dp))
-
-                        // 简易柱状图
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(120.dp),
-                            horizontalArrangement = Arrangement.SpaceEvenly,
-                            verticalAlignment = Alignment.Bottom
-                        ) {
-                            weekData.forEach { day ->
-                                Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.Bottom,
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Text(
-                                        text = "${day.attempts}",
-                                        fontSize = 10.sp,
-                                        color = if (day.isToday) MaterialTheme.colorScheme.primary
-                                        else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        fontWeight = if (day.isToday) FontWeight.Bold else FontWeight.Normal
-                                    )
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    val barHeight = if (maxAttempts > 0) {
-                                        (day.attempts.toFloat() / maxAttempts * 80f).dp
-                                    } else 4.dp
-                                    Box(
-                                        modifier = Modifier
-                                            .width(20.dp)
-                                            .height(barHeight)
-                                            .clip(RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp))
-                                            .background(
-                                                if (day.isToday) MaterialTheme.colorScheme.primary
-                                                else MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
-                                            )
-                                    )
-                                    Spacer(modifier = Modifier.height(6.dp))
-                                    Text(
-                                        text = day.day,
-                                        fontSize = 11.sp,
-                                        color = if (day.isToday) MaterialTheme.colorScheme.primary
-                                        else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        fontWeight = if (day.isToday) FontWeight.Bold else FontWeight.Normal
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 最想打开的App排行
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                    )
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(
-                            "最想打开的App",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            "你的诱惑源排行榜",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                        )
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        topApps.forEachIndexed { index, app ->
-                            AppAttemptRow(
-                                rank = index + 1,
-                                app = app,
-                                maxCount = topApps.first().count
-                            )
-                            if (index < topApps.size - 1) {
-                                Spacer(modifier = Modifier.height(10.dp))
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 今日时间线
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                    )
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(
-                            "今日时间线",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        TimelineItem("14:32", "尝试打开抖音 → 被拦截", isBlocked = true)
-                        TimelineDivider()
-                        TimelineItem("14:35", "AI放行\"查资料\" → 微信", isGranted = true)
-                        TimelineDivider()
-                        TimelineItem("15:20", "紧急解锁", isEmergency = true)
-                        TimelineDivider()
-                        TimelineItem("16:45", "尝试打开小红书 → 被拦截", isBlocked = true)
-                    }
-                }
-            }
-
-            // 底部占位
-            item {
-                Spacer(modifier = Modifier.height(80.dp))
-                Text(
-                    "数据将在你使用过程中逐步积累",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth()
+            // === 最近7天趋势（紧凑型柱状图） ===
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
                 )
-                Spacer(modifier = Modifier.height(16.dp))
+            ) {
+                Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+                    Text(
+                        "7日逃脱趋势",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(80.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.Bottom
+                    ) {
+                        weekData.forEachIndexed { index, count ->
+                            val isToday = index == 6
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Bottom,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text(
+                                    text = "$count",
+                                    fontSize = 9.sp,
+                                    color = if (isToday) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontWeight = if (isToday) FontWeight.Bold else FontWeight.Normal
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                val barHeight = if (maxAttempts > 0) {
+                                    (count.toFloat() / maxAttempts * 50f).dp
+                                } else 4.dp
+                                Box(
+                                    modifier = Modifier
+                                        .width(16.dp)
+                                        .height(barHeight)
+                                        .clip(RoundedCornerShape(topStart = 3.dp, topEnd = 3.dp))
+                                        .background(
+                                            if (isToday) MaterialTheme.colorScheme.primary
+                                            else MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
+                                        )
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = weekLabels[index],
+                                    fontSize = 10.sp,
+                                    color = if (isToday) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontWeight = if (isToday) FontWeight.Bold else FontWeight.Normal
+                                )
+                            }
+                        }
+                    }
+                }
             }
+
+            // === 最想打开的App ===
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                )
+            ) {
+                Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+                    Text(
+                        "诱惑源排行",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    topApps.forEachIndexed { index, app ->
+                        AppAttemptRow(
+                            rank = index + 1,
+                            app = app,
+                            maxCount = topApps.first().count
+                        )
+                        if (index < topApps.size - 1) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                        }
+                    }
+                }
+            }
+
+            // 底部提示
+            Text(
+                "数据将在使用过程中逐步积累",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
+            )
         }
     }
 }
@@ -281,7 +220,7 @@ fun DashboardScreen(
 private fun StatCardItem(card: StatCard, modifier: Modifier = Modifier) {
     Card(
         modifier = modifier,
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(
             containerColor = card.color.copy(alpha = 0.12f)
         )
@@ -289,20 +228,20 @@ private fun StatCardItem(card: StatCard, modifier: Modifier = Modifier) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 14.dp, horizontal = 4.dp),
+                .padding(vertical = 12.dp, horizontal = 2.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text(card.emoji, fontSize = 20.sp)
-            Spacer(modifier = Modifier.height(6.dp))
+            Text(card.emoji, fontSize = 18.sp)
+            Spacer(modifier = Modifier.height(4.dp))
             Text(
                 card.value,
-                fontSize = 20.sp,
+                fontSize = 18.sp,
                 fontWeight = FontWeight.ExtraBold,
                 color = card.color
             )
             Text(
                 card.label,
-                fontSize = 10.sp,
+                fontSize = 9.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                 textAlign = TextAlign.Center
             )
@@ -317,17 +256,16 @@ private fun AppAttemptRow(rank: Int, app: AppAttempt, maxCount: Int) {
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.fillMaxWidth()
     ) {
-        // 排名
         Text(
             text = "$rank",
-            fontSize = 13.sp,
+            fontSize = 12.sp,
             fontWeight = FontWeight.Bold,
             color = app.color,
-            modifier = Modifier.width(20.dp)
+            modifier = Modifier.width(16.dp)
         )
-        Spacer(modifier = Modifier.width(8.dp))
-        Text(app.emoji, fontSize = 18.sp)
-        Spacer(modifier = Modifier.width(8.dp))
+        Spacer(modifier = Modifier.width(6.dp))
+        Text(app.emoji, fontSize = 16.sp)
+        Spacer(modifier = Modifier.width(6.dp))
         Column(modifier = Modifier.weight(1f)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -335,53 +273,23 @@ private fun AppAttemptRow(rank: Int, app: AppAttempt, maxCount: Int) {
             ) {
                 Text(
                     app.name,
-                    fontSize = 13.sp,
+                    fontSize = 12.sp,
                     fontWeight = FontWeight.Medium
                 )
                 Text(
                     "${app.count}次",
-                    fontSize = 12.sp,
+                    fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            Spacer(modifier = Modifier.height(4.dp))
+            Spacer(modifier = Modifier.height(3.dp))
             Box(
                 modifier = Modifier
-                    .fillMaxWidth(fraction)
-                    .height(4.dp)
+                    .fillMaxWidth(fraction.coerceAtLeast(0.05f))
+                    .height(3.dp)
                     .clip(RoundedCornerShape(2.dp))
                     .background(app.color.copy(alpha = 0.6f))
             )
         }
     }
-}
-
-@Composable
-private fun TimelineItem(time: String, desc: String, isBlocked: Boolean = false, isGranted: Boolean = false, isEmergency: Boolean = false) {
-    val (icon, color) = when {
-        isBlocked -> "🚫" to Color(0xFFFF6B6B)
-        isGranted -> "✅" to Color(0xFF66BB6A)
-        isEmergency -> "🔑" to Color(0xFFFFA726)
-        else -> "ℹ️" to MaterialTheme.colorScheme.onSurfaceVariant
-    }
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Text(time, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f), modifier = Modifier.width(40.dp))
-        Text(icon, fontSize = 14.sp)
-        Spacer(modifier = Modifier.width(8.dp))
-        Text(desc, fontSize = 12.sp, color = color)
-    }
-}
-
-@Composable
-private fun TimelineDivider() {
-    Box(
-        modifier = Modifier
-            .padding(start = 52.dp, top = 4.dp, bottom = 4.dp)
-            .width(1.dp)
-            .height(12.dp)
-            .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.15f))
-    )
 }

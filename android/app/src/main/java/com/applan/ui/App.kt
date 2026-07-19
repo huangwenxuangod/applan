@@ -289,6 +289,21 @@ fun ApplanApp(context: Context) {
             Log.d("ApplanApp", "Violation detected: ${record.appName} (${record.packageName})")
             if (AppConfig.isExitGranted()) return
 
+            // Plan Mode开启时：违规直接狠狠重启锁定，不拉回Chat对话
+            if (AppConfig.isPlanModeEnabled()) {
+                Log.d("ApplanApp", "Plan Mode: hard reset on violation")
+                AppState.resetGrant()
+                AppConfig.setExitGranted(false)
+                BlockOverlay.show(context)
+                val a11y = LockAccessibilityService.getInstance()
+                a11y?.lockScreen()
+                markNeedsReset()
+                KeepAliveService.bringToForeground(context, "plan_violation_${record.packageName}")
+                showTopToast(context, "计划违规：${record.appName}，已重新锁定")
+                return
+            }
+
+            // 普通模式：拉回Chat页面对话
             markNeedsReset()
             currentScreen = Screen.Chat
             KeepAliveService.bringToForeground(context, "violation_${record.packageName}")

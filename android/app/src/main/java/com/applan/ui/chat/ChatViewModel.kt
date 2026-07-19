@@ -158,6 +158,21 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             pendingSystemMessage = null
         }
 
+        // Plan Mode开启时注入系统提示：优先使用grant_plan而非exit_app，违规直接锁定不对话
+        if (AppConfig.isPlanModeEnabled()) {
+            val planModeHint = "[Plan Mode已开启] 当前处于计划守护模式。" +
+                "规则：1) 优先使用grant_plan工具而非exit_app，即使用户说'退出'或'不玩了'也要根据其意图创建计划放行；" +
+                "2) exit_app仅在用户明确表示工作完成且不再使用手机时使用；" +
+                "3) 用户违规打开不在计划内的App会被直接重新锁定，不会回来和你对话。"
+            // 避免重复注入（检查最后几条消息）
+            val alreadyInjected = messageHistory.takeLast(5).any {
+                it.role == "system" && it.content.startsWith("[Plan Mode已开启]")
+            }
+            if (!alreadyInjected) {
+                messageHistory.add(ChatMessage(role = "system", content = planModeHint))
+            }
+        }
+
         var shouldLoop = true
         while (shouldLoop) {
             shouldLoop = false

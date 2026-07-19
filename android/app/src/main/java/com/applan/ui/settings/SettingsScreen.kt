@@ -28,6 +28,7 @@ import com.applan.util.AppUpdateManager
 import com.applan.util.AutoStartHelper
 import com.applan.util.EmergencyKeyGenerator
 import com.applan.util.PermissionHelper
+import com.applan.ui.common.swipeToBack
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -86,6 +87,11 @@ fun SettingsScreen(
         mutableStateOf(AppConfig.isStrictModeEnabled())
     }
 
+    // 计划模式状态（Plan Mode）
+    var planModeEnabled by remember {
+        mutableStateOf(AppConfig.isPlanModeEnabled())
+    }
+
     // 必需权限检查 - 用于自动启用严格模式
     val usageStatsGranted by remember(permissionVersion) {
         derivedStateOf { PermissionHelper.isUsageStatsGranted(context) }
@@ -130,6 +136,7 @@ fun SettingsScreen(
     }
 
     Scaffold(
+        modifier = Modifier.swipeToBack(onBack = onBack),
         topBar = {
             TopAppBar(
                 title = { Text("设置", fontWeight = FontWeight.Bold) },
@@ -248,6 +255,29 @@ fun SettingsScreen(
                                 openSettings { PermissionHelper.jumpToNotificationSettings(context) }
                             },
                             enabled = !strictModeEnabled
+                        )
+                    }
+                }
+            }
+
+            // 守护模式
+            item {
+                SectionTitle("守护模式")
+                Spacer(modifier = Modifier.height(8.dp))
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                ) {
+                    Column {
+                        ToggleItem(
+                            title = "计划模式 (Plan Mode)",
+                            desc = "放行后持续监控App使用，偏离计划直接锁定。说去飞书却刷抖音？不存在的。",
+                            checked = planModeEnabled,
+                            onCheckedChange = { enabled ->
+                                AppConfig.setPlanModeEnabled(enabled)
+                                planModeEnabled = enabled
+                            }
                         )
                     }
                 }

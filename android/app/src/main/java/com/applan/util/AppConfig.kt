@@ -15,6 +15,7 @@ object AppConfig {
     private const val KEY_MODEL = "model"
     private const val KEY_STRICT_MODE = "strict_mode_enabled"
     private const val KEY_EXIT_GRANTED = "exit_granted"
+    private const val KEY_PLAN_MODE = "plan_mode_enabled"
 
     private lateinit var prefs: SharedPreferences
 
@@ -96,6 +97,21 @@ object AppConfig {
 
     fun setExitGranted(granted: Boolean) {
         ensureInitialized().edit().putBoolean(KEY_EXIT_GRANTED, granted).apply()
+    }
+
+    /**
+     * 计划模式（Plan Mode）：默认关闭
+     * 开启后：
+     * 1. AI放行后持续后台监控App使用，偏离计划直接重启锁定（不弹对话）
+     * 2. AI优先使用grant_plan而非exit_app
+     * 3. 适合"说要去飞书写文档结果跑去抖音"的场景
+     */
+    fun isPlanModeEnabled(): Boolean {
+        return ensureInitialized().getBoolean(KEY_PLAN_MODE, false)
+    }
+
+    fun setPlanModeEnabled(enabled: Boolean) {
+        ensureInitialized().edit().putBoolean(KEY_PLAN_MODE, enabled).apply()
     }
 
     /**
