@@ -42,12 +42,6 @@ class LockAccessibilityService : AccessibilityService() {
     @Volatile
     private var cachedDefaultLauncher: String? = null
 
-    @Volatile
-    private var isPullingBack = false
-
-    @Volatile
-    private var lastPullTime = 0L
-
     private var pendingViolationPkg: String? = null
     private val violationCheckRunnable = Runnable {
         val pkg = pendingViolationPkg ?: return@Runnable
@@ -178,7 +172,7 @@ class LockAccessibilityService : AccessibilityService() {
         try {
             if (AppConfig.isExitGranted()) {
                 if (BlockOverlay.isShowing()) {
-                    mainHandler.post { BlockOverlay.hide() }
+                    mainHandler.post { BlockOverlay.hideImmediately() }
                 }
                 return
             }
@@ -191,7 +185,7 @@ class LockAccessibilityService : AccessibilityService() {
                 }
                 if (AppState.isGrantedByAi() || AppState.isGrantedByEmergency()) {
                     if (BlockOverlay.isShowing()) {
-                        mainHandler.post { BlockOverlay.hide() }
+                        mainHandler.post { BlockOverlay.hideImmediately() }
                     }
                     return
                 }
@@ -236,6 +230,8 @@ class LockAccessibilityService : AccessibilityService() {
     }
 
     private fun performBlock(pkg: String) {
+        // 只显示遮罩，不自动拉起Activity - 用户必须点击"返回applan"按钮
+        // 这样避免了闪屏问题（遮罩弹出→立即拉回→遮罩消失）
         mainHandler.post {
             try {
                 BlockOverlay.show(this@LockAccessibilityService)
@@ -244,62 +240,6 @@ class LockAccessibilityService : AccessibilityService() {
                 fallbackPullBack(pkg)
             }
         }
-        if (!isPullingBack) {
-            val now = System.currentTimeMillis()
-            if (now - lastPullTime < 500) return
-            lastPullTime = now
-            pullBackToApp()
-        }
-    }
-
-    private fun pullBackToApp() {
-        isPullingBack = true
-        mainHandler.post {
-            try {
-                val intent = Intent(this, MainActivity::class.java).apply {
-                    addFlags(
-                        Intent.FLAG_ACTIVITY_NEW_TASK or
-                        Intent.FLAG_ACTIVITY_CLEAR_TOP or
-                        Intent.FLAG_ACTIVITY_SINGLE_TOP or
-                        Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
-                        Intent.FLAG_ACTIVITY_NO_ANIMATION
-                    )
-                }
-                startActivity(intent)
-            } catch (e: Exception) {
-                Log.e(TAG, "Pull back failed", e)
-            }
-        }
-        mainHandler.postDelayed({
-            isPullingBack = false
-        }, 1000)
-    }
-
-    private fun pullBackToAppForChallenge(record: ViolationRecord) {
-        isPullingBack = true
-        mainHandler.post {
-            try {
-                val intent = Intent(this, MainActivity::class.java).apply {
-                    addFlags(
-                        Intent.FLAG_ACTIVITY_NEW_TASK or
-                        Intent.FLAG_ACTIVITY_CLEAR_TOP or
-                        Intent.FLAG_ACTIVITY_SINGLE_TOP or
-                        Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
-                        Intent.FLAG_ACTIVITY_NO_ANIMATION
-                    )
-                    putExtra("challenge_mode", true)
-                    putExtra("violating_package", record.packageName)
-                    putExtra("violating_app_name", record.appName)
-                }
-                startActivity(intent)
-            } catch (e: Exception) {
-                Log.e(TAG, "Pull back for challenge failed", e)
-                pullBackToApp()
-            }
-        }
-        mainHandler.postDelayed({
-            isPullingBack = false
-        }, 1000)
     }
 
     private fun fallbackPullBack(pkg: String) {
@@ -307,10 +247,10 @@ class LockAccessibilityService : AccessibilityService() {
             val intent = Intent(this, MainActivity::class.java).apply {
                 addFlags(
                     Intent.FLAG_ACTIVITY_NEW_TASK or
-                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
-                    Intent.FLAG_ACTIVITY_SINGLE_TOP or
-                    Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
-                    Intent.FLAG_ACTIVITY_NO_ANIMATION
+                            Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                            Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                            Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
+                            Intent.FLAG_ACTIVITY_NO_ANIMATION
                 )
             }
             startActivity(intent)

@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
 import android.os.Build
+import com.applan.util.AppConfig
 import com.applan.util.CrashHandler
 
 class ApplanApp : Application() {
@@ -29,6 +30,11 @@ class ApplanApp : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+
+        // 初始化AppConfig（必须在任何Service/Activity之前）
+        // 修复：Service可能在Activity之前被系统启动（开机自启/AlarmManager重启），
+        // 如果不在Application中初始化，Service访问AppConfig时会崩溃
+        AppConfig.init(this)
 
         // 初始化全局崩溃处理器（必须最先初始化）
         CrashHandler.init(this)

@@ -214,6 +214,12 @@
                 android:value="Daemon watchdog service for app survival" />
         </service>
 
+        <!-- JobScheduler保活兜底服务（国产ROM杀进程组后兜底重启） -->
+        <service
+            android:name=".service.KeepAliveJobService"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
+
         <!-- 设备管理员（防卸载） -->
         <receiver
             android:name=".service.AppDeviceAdminReceiver"

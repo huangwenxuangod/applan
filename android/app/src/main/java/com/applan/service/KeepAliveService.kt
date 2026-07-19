@@ -6,7 +6,9 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.app.job.JobInfo
 import android.content.BroadcastReceiver
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -30,25 +32,28 @@ import com.applan.util.PermissionHelper
  * 前台保活服务
  * 核心策略（Cactus式保活）：
  * 1. startForeground 常驻通知
- * 2. onTaskRemoved 立即拉起自己 + MainActivity
+ * 2. onTaskRemoved 立即显示遮罩 + 重启自己 + AlarmManager兜底 + JobScheduler兜底
  * 3. onDestroy 用 AlarmManager 延迟重启
  * 4. 与 DaemonService 互相守护
  *
  * 性能优化：
  * - 使用工作线程Handler，不阻塞主线程
- * - 智能判断Activity是否已在前台，避免重复startActivity
+ * - 只显示遮罩不自动拉起Activity，避免闪屏
  * - Service启动冷却机制，防止双Service互相无限启动
- * - 严格模式下监控关键权限，被关闭时立即引导重新开启
+ * - 严格模式下监控关键权限，被关闭时立即拉起引导页
  */
 class KeepAliveService : Service() {
 
     companion object {
         private const val TAG = "KeepAlive"
         private const val NOTIFICATION_ID = 10001
-        private const val CHECK_INTERVAL_MS = 5000L
+        private const val JOB_ID_RESTART = 20001
+
+        // 静态引用mainHandler，供bringToForeground静态方法使用
+        @Volatile
+        private var mainHandlerInstance: Handler? = null
 
         fun start(context: Context) {
-            // 性能优化：加启动冷却，防止短时间内重复启动
             if (!AppState.canStartKeepAlive()) {
                 return
             }
@@ -60,27 +65,48 @@ class KeepAliveService : Service() {
             }
         }
 
-        fun bringToForeground(context: Context, reason: String = "check") {
+        /**
+         * 将App带回前台（用于检测到违规/AI工具调用lock_screen时）
+         * 策略：先显示遮罩（毫秒级），再启动Activity（需要系统调度可能有延迟）
+         */
+        fun bringToForeground(context: Context, reason: String? = null) {
+            Log.d(TAG, "bringToForeground: reason=$reason")
             try {
+                // 1. 先显示遮罩（立即生效，不依赖Activity启动）
+                mainHandlerInstance?.post {
+                    try {
+                        if (!BlockOverlay.isShowing()) {
+                            BlockOverlay.show(context)
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to show overlay in bringToForeground", e)
+                    }
+                } ?: run {
+                    // Service可能还没创建mainHandler，直接尝试显示
+                    try {
+                        Handler(Looper.getMainLooper()).post {
+                            BlockOverlay.show(context)
+                        }
+                    } catch (_: Exception) {}
+                }
+
+                // 2. 启动MainActivity
                 val intent = Intent(context, MainActivity::class.java).apply {
-                    addFlags(
-                        Intent.FLAG_ACTIVITY_NEW_TASK or
-                        Intent.FLAG_ACTIVITY_SINGLE_TOP or
-                        Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
-                        Intent.FLAG_ACTIVITY_CLEAR_TOP
-                    )
-                    putExtra("auto_launch", true)
-                    putExtra("launch_reason", reason)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or
+                            Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                            Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
+                            Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                    if (reason != null) {
+                        putExtra("violation_reason", reason)
+                    }
                 }
                 context.startActivity(intent)
-                Log.d(TAG, "bringToForeground: $reason")
             } catch (e: Exception) {
-                Log.e(TAG, "bringToForeground failed: $reason", e)
+                Log.e(TAG, "Failed to bring to foreground", e)
             }
         }
     }
 
-    // 性能优化：使用工作线程Handler，不占用主线程
     private var handlerThread: HandlerThread? = null
     private var handler: Handler? = null
     private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
@@ -90,39 +116,37 @@ class KeepAliveService : Service() {
     override fun onCreate() {
         super.onCreate()
         Log.d(TAG, "KeepAlive service created")
+        mainHandlerInstance = mainHandler
 
-        // 创建工作线程，所有定时任务跑在工作线程，不阻塞UI
         handlerThread = HandlerThread("KeepAliveWorker").apply {
             start()
             handler = Handler(looper)
         }
 
-        // 每60秒检查守护状态（从30秒改为60秒，减少唤醒频率）
         checkRunnable = object : Runnable {
             override fun run() {
-                var nextInterval = 15000L // 默认15秒
+                var nextInterval = 15000L
                 try {
                     if (AppConfig.isExitGranted()) {
-                        // AI已放行（exit_app/紧急解锁）→ 不拦截，不拉起Activity，保活但不干扰
                         if (AppState.canStartDaemon()) {
                             DaemonService.start(this@KeepAliveService)
                         }
-                        nextInterval = 60000L // 放行时60秒检查一次，减少资源消耗
+                        nextInterval = 60000L
                     } else {
-                        // 严格模式下检查关键权限是否被关闭
                         if (AppConfig.isStrictModeEnabled()) {
                             checkCriticalPermissions()
                         }
 
-                        // 检查DaemonService是否存活，加冷却判断
                         if (AppState.canStartDaemon()) {
                             DaemonService.start(this@KeepAliveService)
                         }
 
-                        // 性能优化关键：只有真正需要时才拉起Activity
-                        if (AppState.canLaunchActivity()) {
-                            Log.d(TAG, "Activity not in foreground and should block, launching...")
-                            launchMainActivity()
+                        // 只显示遮罩，不自动拉起Activity（避免闪屏）
+                        // 用户通过点击遮罩上的"返回applan"按钮回来
+                        if (AppState.shouldBlock() && !AppState.isActivityInForeground) {
+                            if (!BlockOverlay.isShowing()) {
+                                mainHandler.post { BlockOverlay.show(this@KeepAliveService) }
+                            }
                         }
                     }
                 } catch (e: Exception) {
@@ -136,10 +160,6 @@ class KeepAliveService : Service() {
         registerScreenReceiver()
     }
 
-    /**
-     * 严格模式下检查关键权限是否被关闭
-     * 如果无障碍服务或悬浮窗权限被关闭，立即引导用户重新开启
-     */
     private fun checkCriticalPermissions() {
         try {
             val a11yEnabled = PermissionHelper.isAccessibilityEnabled(this)
@@ -147,59 +167,69 @@ class KeepAliveService : Service() {
 
             if (!a11yEnabled || !overlayEnabled) {
                 Log.w(TAG, "Strict mode: critical permission revoked! a11y=$a11yEnabled, overlay=$overlayEnabled")
-                // 权限被关闭，立即拉起引导页（使用Onboarding而不是Chat）
-                // 通过设置特殊标志让MainActivity显示权限缺失警告
                 AppState.setPermissionRevoked(true)
-                launchMainActivity()
+                // 权限被关闭：必须立即拉起MainActivity（不能只显示遮罩，因为用户需要重新授权）
+                forceLaunchMainActivity()
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to check permissions in strict mode", e)
         }
     }
 
-    private fun launchMainActivity() {
+    /**
+     * 只显示遮罩，不自动启动Activity（避免闪屏）
+     */
+    private fun showBlockOverlay() {
+        if (AppState.shouldBlock() && !AppState.isActivityInForeground && !BlockOverlay.isShowing()) {
+            mainHandler.post { BlockOverlay.show(this@KeepAliveService) }
+        }
+    }
+
+    /**
+     * 强制启动MainActivity（仅用于权限撤销等必须拉起的场景）
+     */
+    private fun forceLaunchMainActivity() {
         try {
-            // 先用全局遮罩即时拦截（毫秒级），再后台拉起Activity
-            if (AppState.shouldBlock() && !AppState.isActivityInForeground) {
-                mainHandler.post { BlockOverlay.show(this@KeepAliveService) }
-            }
+            mainHandler.post { BlockOverlay.show(this@KeepAliveService) }
             val intent = Intent(this@KeepAliveService, MainActivity::class.java).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or
                         Intent.FLAG_ACTIVITY_SINGLE_TOP or
                         Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
                         Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                putExtra("permission_revoked", true)
             }
             startActivity(intent)
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to launch activity", e)
+            Log.e(TAG, "Failed to force launch activity", e)
         }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification())
-        // 启动DaemonService时加冷却判断
         if (AppState.canStartDaemon()) {
             DaemonService.start(this)
         }
-        // START_STICKY：被杀后系统会尝试重启
         return START_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        Log.w(TAG, "onTaskRemoved - app was swiped away, restarting everything!")
+        Log.w(TAG, "onTaskRemoved - app was swiped away, restarting!")
         try {
-            launchMainActivity()
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to restart MainActivity on task removed", e)
-        }
+            // 立即显示遮罩（遮罩在Service中，Service没死遮罩就能显示）
+            if (!AppConfig.isExitGranted() && AppState.shouldBlock()) {
+                mainHandler.post { BlockOverlay.show(this) }
+            }
+        } catch (_: Exception) {}
         try {
             val restartService = Intent(this, KeepAliveService::class.java)
             ContextCompat.startForegroundService(this, restartService)
         } catch (_: Exception) {}
         scheduleRestart(100)
+        // JobScheduler兜底（国产ROM杀进程组后AlarmManager可能失效）
+        scheduleJobRestart()
         super.onTaskRemoved(rootIntent)
     }
 
@@ -213,6 +243,7 @@ class KeepAliveService : Service() {
         }
         handlerThread?.quitSafely()
         scheduleRestart(500)
+        scheduleJobRestart()
         if (AppState.canStartDaemon()) {
             DaemonService.start(this)
         }
@@ -226,8 +257,8 @@ class KeepAliveService : Service() {
                 Log.d(TAG, "Screen event: $action")
                 if (action == Intent.ACTION_SCREEN_ON || action == Intent.ACTION_USER_PRESENT) {
                     handler?.postDelayed({
-                        if (AppState.shouldBlock()) {
-                            bringToForeground(context, "screen_on")
+                        if (AppState.shouldBlock() && !AppState.isActivityInForeground) {
+                            mainHandler.post { BlockOverlay.show(context) }
                         }
                     }, 200)
                 }
@@ -240,7 +271,6 @@ class KeepAliveService : Service() {
         }
         try {
             registerReceiver(screenReceiver, filter)
-            Log.d(TAG, "Screen receiver registered")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to register screen receiver", e)
         }
@@ -260,10 +290,31 @@ class KeepAliveService : Service() {
             } else {
                 am.setExact(AlarmManager.ELAPSED_REALTIME_WAKEUP, trigger, pi)
             }
-            Log.d(TAG, "Restart scheduled in ${delayMs}ms")
         } catch (e: Exception) {
             Log.e(TAG, "Schedule restart failed", e)
             try { start(this) } catch (_: Exception) {}
+        }
+    }
+
+    /**
+     * JobScheduler兜底重启 - 国产ROM杀进程组后AlarmManager可能失效，JobScheduler更可靠
+     */
+    private fun scheduleJobRestart() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                val js = getSystemService(Context.JOB_SCHEDULER_SERVICE) as android.app.job.JobScheduler
+                val component = ComponentName(this, KeepAliveJobService::class.java)
+                val jobInfo = JobInfo.Builder(JOB_ID_RESTART, component)
+                    .setMinimumLatency(1000)
+                    .setOverrideDeadline(3000)
+                    .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
+                    .setPersisted(true)
+                    .build()
+                js.schedule(jobInfo)
+                Log.d(TAG, "JobScheduler restart scheduled")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to schedule job restart", e)
         }
     }
 

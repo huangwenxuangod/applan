@@ -18,6 +18,11 @@ object AppConfig {
 
     private lateinit var prefs: SharedPreferences
 
+    /**
+     * 检查是否已初始化，双重保险
+     */
+    fun isInitialized(): Boolean = ::prefs.isInitialized
+
     fun init(context: Context) {
         // 使用DeviceProtectedStorage，锁屏状态也能访问
         val ctx = try {
@@ -28,28 +33,44 @@ object AppConfig {
         prefs = ctx.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
     }
 
+    /**
+     * 内部方法：确保已初始化，未初始化时使用Application context初始化
+     */
+    private fun ensureInitialized(): SharedPreferences {
+        if (!::prefs.isInitialized) {
+            // 极端情况：Service在Application.onCreate之前被调用，使用Application实例初始化
+            try {
+                init(com.applan.ApplanApp.instance)
+            } catch (_: Exception) {
+                // 如果instance也没有，抛出清晰的错误信息而不是lateinit崩溃
+                throw IllegalStateException("AppConfig not initialized! Ensure ApplanApp is registered in AndroidManifest.xml")
+            }
+        }
+        return prefs
+    }
+
     fun getServerUrl(): String {
-        return prefs.getString(KEY_SERVER_URL, BuildConfig.SERVER_URL) ?: BuildConfig.SERVER_URL
+        return ensureInitialized().getString(KEY_SERVER_URL, BuildConfig.SERVER_URL) ?: BuildConfig.SERVER_URL
     }
 
     fun getApiKey(): String {
-        return prefs.getString(KEY_API_KEY, BuildConfig.API_KEY) ?: BuildConfig.API_KEY
+        return ensureInitialized().getString(KEY_API_KEY, BuildConfig.API_KEY) ?: BuildConfig.API_KEY
     }
 
     fun getModel(): String {
-        return prefs.getString(KEY_MODEL, "deepseek-chat") ?: "deepseek-chat"
+        return ensureInitialized().getString(KEY_MODEL, "deepseek-chat") ?: "deepseek-chat"
     }
 
     fun saveServerUrl(url: String) {
-        prefs.edit().putString(KEY_SERVER_URL, url.trim()).apply()
+        ensureInitialized().edit().putString(KEY_SERVER_URL, url.trim()).apply()
     }
 
     fun saveApiKey(key: String) {
-        prefs.edit().putString(KEY_API_KEY, key.trim()).apply()
+        ensureInitialized().edit().putString(KEY_API_KEY, key.trim()).apply()
     }
 
     fun saveModel(model: String) {
-        prefs.edit().putString(KEY_MODEL, model.trim()).apply()
+        ensureInitialized().edit().putString(KEY_MODEL, model.trim()).apply()
     }
 
     /**
@@ -57,11 +78,11 @@ object AppConfig {
      * 当所有必需权限开启后自动启用，启用后设置页面的权限开关锁定
      */
     fun isStrictModeEnabled(): Boolean {
-        return prefs.getBoolean(KEY_STRICT_MODE, false)
+        return ensureInitialized().getBoolean(KEY_STRICT_MODE, false)
     }
 
     fun enableStrictMode() {
-        prefs.edit().putBoolean(KEY_STRICT_MODE, true).apply()
+        ensureInitialized().edit().putBoolean(KEY_STRICT_MODE, true).apply()
     }
 
     /**
@@ -70,11 +91,11 @@ object AppConfig {
      * 用户下次主动点击图标打开App时重置为false
      */
     fun isExitGranted(): Boolean {
-        return prefs.getBoolean(KEY_EXIT_GRANTED, false)
+        return ensureInitialized().getBoolean(KEY_EXIT_GRANTED, false)
     }
 
     fun setExitGranted(granted: Boolean) {
-        prefs.edit().putBoolean(KEY_EXIT_GRANTED, granted).apply()
+        ensureInitialized().edit().putBoolean(KEY_EXIT_GRANTED, granted).apply()
     }
 
     /**

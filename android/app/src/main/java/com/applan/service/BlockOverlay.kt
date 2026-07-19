@@ -5,6 +5,8 @@ import android.content.Intent
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.util.Log
 import android.view.Gravity
@@ -20,34 +22,38 @@ import com.applan.MainActivity
  *
  * 核心原理：使用TYPE_APPLICATION_OVERLAY在所有App之上显示一个全屏遮罩
  * - 遮罩拦截所有触摸/按键事件，用户无法操作底层App
- * - 遮罩上只有一个"返回applan"按钮
+ * - 遮罩上只有一个"返回applan"按钮，必须点击才能返回
  * - 毫秒级显示，没有Activity启动的延迟和闪屏
- * - Activity到前台后自动隐藏遮罩
+ * - 用户点击按钮后才拉起MainActivity，避免闪屏
+ * - Activity到前台后延迟300ms自动隐藏遮罩（等渲染完成）
  */
 object BlockOverlay {
 
     private const val TAG = "BlockOverlay"
+    private const val HIDE_DELAY_MS = 300L // Activity到前台后延迟隐藏遮罩，避免闪屏
 
     @Volatile
     private var isShowing = false
 
     private var overlayView: View? = null
     private var windowManager: WindowManager? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var hideRunnable: Runnable? = null
 
     /**
      * 显示全局拦截遮罩（毫秒级响应）
-     * 同时后台拉起MainActivity
+     * 只显示遮罩，不自动拉起Activity - 用户必须点击按钮才返回
      */
     fun show(context: Context) {
         if (isShowing) {
-            // 已经在显示，直接尝试拉起Activity即可
-            launchActivity(context)
+            // 已经在显示，不需要重复操作
+            Log.d(TAG, "Overlay already showing, skip")
             return
         }
 
         // 检查悬浮窗权限
         if (!Settings.canDrawOverlays(context)) {
-            Log.w(TAG, "No overlay permission, falling back to startActivity only")
+            Log.w(TAG, "No overlay permission, falling back to startActivity")
             launchActivity(context)
             return
         }
@@ -64,32 +70,18 @@ object BlockOverlay {
                 WindowManager.LayoutParams.MATCH_PARENT,
                 WindowManager.LayoutParams.MATCH_PARENT,
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                        WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                        WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON,
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                        WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
+                        WindowManager.LayoutParams.FLAG_DIM_BEHIND,
                 PixelFormat.TRANSLUCENT
             ).apply {
                 gravity = Gravity.TOP or Gravity.START
-                // 高优先级，覆盖在一切之上
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    // TYPE_APPLICATION_OVERLAY已经是最高层级的应用窗口
-                }
             }
-
-            // FLAG_NOT_FOCUSABLE会导致back键不被拦截，需要去掉
-            // 但为了让按钮能点击，我们需要处理焦点
-            params.flags = WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                    WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
-                    WindowManager.LayoutParams.FLAG_DIM_BEHIND
 
             wm.addView(layout, params)
             overlayView = layout
             isShowing = true
-            Log.d(TAG, "Block overlay SHOWN - instant block activated")
-
-            // 后台拉起MainActivity
-            launchActivity(context)
+            Log.d(TAG, "Block overlay SHOWN - waiting for user to tap return button")
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to show overlay", e)
@@ -99,21 +91,48 @@ object BlockOverlay {
     }
 
     /**
-     * 隐藏遮罩（MainActivity到前台时调用）
+     * 隐藏遮罩（MainActivity到前台时调用，延迟300ms避免闪屏）
      */
     fun hide() {
+        if (!isShowing) return
+        // 取消之前的延迟隐藏
+        hideRunnable?.let { mainHandler.removeCallbacks(it) }
+        hideRunnable = Runnable {
+            try {
+                overlayView?.let { view ->
+                    windowManager?.removeView(view)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to hide overlay", e)
+            } finally {
+                overlayView = null
+                windowManager = null
+                isShowing = false
+                hideRunnable = null
+                Log.d(TAG, "Block overlay HIDDEN")
+            }
+        }
+        mainHandler.postDelayed(hideRunnable!!, HIDE_DELAY_MS)
+    }
+
+    /**
+     * 立即隐藏遮罩（不延迟），用于exit_app/紧急解锁放行时
+     */
+    fun hideImmediately() {
+        hideRunnable?.let { mainHandler.removeCallbacks(it) }
         if (!isShowing) return
         try {
             overlayView?.let { view ->
                 windowManager?.removeView(view)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to hide overlay", e)
+            Log.e(TAG, "Failed to hide overlay immediately", e)
         } finally {
             overlayView = null
             windowManager = null
             isShowing = false
-            Log.d(TAG, "Block overlay HIDDEN")
+            hideRunnable = null
+            Log.d(TAG, "Block overlay HIDDEN immediately")
         }
     }
 
@@ -133,19 +152,19 @@ object BlockOverlay {
         val root = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setBackgroundColor(Color.parseColor("#E6000000")) // 90%黑
+            setBackgroundColor(Color.parseColor("#F2000000")) // 95%黑，几乎不透明
             setPadding(pad32, pad32, pad32, pad32)
 
-            // 拦截所有触摸事件
+            // 拦截所有触摸事件（包括按钮区域外的触摸）
             setOnTouchListener { _, _ -> true }
         }
 
-        // 锁图标（用文字emoji代替，避免资源依赖）
+        // 锁图标
         val lockIcon = TextView(context).apply {
             text = "🔒"
-            this.textSize = 48f
+            this.textSize = 56f
             gravity = Gravity.CENTER
-            setPadding(0, 0, 0, pad16)
+            setPadding(0, 0, 0, pad24)
         }
         root.addView(lockIcon)
 
@@ -153,7 +172,7 @@ object BlockOverlay {
         val titleText = TextView(context).apply {
             text = "applan 守护中"
             setTextColor(Color.WHITE)
-            this.textSize = baseTextSize + 4
+            this.textSize = baseTextSize + 6
             gravity = Gravity.CENTER
             setPadding(0, 0, 0, pad16)
             paint?.isFakeBoldText = true
@@ -162,24 +181,26 @@ object BlockOverlay {
 
         // 提示文字
         val descText = TextView(context).apply {
-            text = "你的注意力防线已激活\n完成任务后通过AI放行，或点击下方按钮返回"
-            setTextColor(Color.parseColor("#B3FFFFFF")) // 70%白
+            text = "你的注意力防线已激活\n请完成当前任务后通过AI对话放行\n或点击下方按钮返回 applan"
+            setTextColor(Color.parseColor("#CCFFFFFF")) // 80%白
             this.textSize = baseTextSize - 2
             gravity = Gravity.CENTER
             setPadding(0, 0, 0, pad32)
-            setLineSpacing(6f * density, 1.2f)
+            setLineSpacing(6f * density, 1.3f)
         }
         root.addView(descText)
 
-        // 返回按钮
+        // 返回按钮 - 点击后才拉起MainActivity
         val backBtn = Button(context).apply {
             text = "返回 applan"
             this.textSize = btnTextSize
             setTextColor(Color.WHITE)
             setBackgroundColor(Color.parseColor("#FF1A73E8"))
-            setPadding(pad24, pad16, pad24, pad16)
+            setPadding(pad32, pad16, pad32, pad16)
             isAllCaps = false
+            elevation = 4 * density
             setOnClickListener {
+                Log.d(TAG, "User tapped return button, launching MainActivity")
                 launchActivity(context)
             }
         }

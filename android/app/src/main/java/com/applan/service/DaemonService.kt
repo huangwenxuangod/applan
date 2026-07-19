@@ -6,6 +6,8 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.app.job.JobInfo
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.os.Build
@@ -18,27 +20,22 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.applan.CHANNEL_KEEP_ALIVE
 import com.applan.R
+import com.applan.util.AppConfig
 import com.applan.util.AppState
 
 /**
  * 守护服务（Daemon Service）
  * 第二个前台服务，与KeepAliveService互相守护
  * Cactus式双进程保活：两个Service都在onDestroy中重启对方
- *
- * 性能优化：
- * - 使用工作线程Handler，不阻塞主线程
- * - Service启动冷却机制，防止双Service互相无限启动
- * - 检查间隔从15秒延长到30秒，减少唤醒
  */
 class DaemonService : Service() {
 
     companion object {
         private const val TAG = "Daemon"
         private const val NOTIFICATION_ID = 10002
-        private const val ACTION_PING = "com.applan.DAEMON_PING"
+        private const val JOB_ID_DAEMON_RESTART = 20002
 
         fun start(context: Context) {
-            // 性能优化：加启动冷却，防止短时间内重复启动
             if (!AppState.canStartDaemon()) {
                 return
             }
@@ -51,7 +48,6 @@ class DaemonService : Service() {
         }
     }
 
-    // 性能优化：使用工作线程Handler，不占用主线程
     private var handlerThread: HandlerThread? = null
     private var handler: Handler? = null
     private var pingRunnable: Runnable? = null
@@ -60,29 +56,25 @@ class DaemonService : Service() {
         super.onCreate()
         Log.d(TAG, "Daemon service created")
 
-        // 创建工作线程，所有定时任务跑在工作线程，不阻塞UI
         handlerThread = HandlerThread("DaemonWorker").apply {
             start()
             handler = Handler(looper)
         }
 
-        // 每20秒检查KeepAliveService是否存活（工作线程，不影响UI）
         pingRunnable = object : Runnable {
             override fun run() {
-                // 加冷却判断，避免无限循环启动
                 if (AppState.canStartKeepAlive()) {
                     KeepAliveService.start(this@DaemonService)
                 }
-                handler?.postDelayed(this, 20000) // 20秒检查一次
+                handler?.postDelayed(this, 20000)
             }
         }
-        handler?.postDelayed(pingRunnable!!, 5000) // 首次5秒后检查
+        handler?.postDelayed(pingRunnable!!, 5000)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification())
-        // 启动KeepAliveService时加冷却判断
         if (AppState.canStartKeepAlive()) {
             KeepAliveService.start(this)
         }
@@ -92,8 +84,23 @@ class DaemonService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        Log.w(TAG, "onTaskRemoved - restarting")
-        scheduleRestart()
+        Log.w(TAG, "onTaskRemoved - restarting both services + showing overlay")
+        try {
+            if (!AppConfig.isExitGranted() && AppState.shouldBlock()) {
+                Handler(android.os.Looper.getMainLooper()).post {
+                    BlockOverlay.show(this)
+                }
+            }
+        } catch (_: Exception) {}
+        try {
+            val restartService = Intent(this, DaemonService::class.java)
+            ContextCompat.startForegroundService(this, restartService)
+        } catch (_: Exception) {}
+        scheduleRestart(300)
+        scheduleJobRestart()
+        if (AppState.canStartKeepAlive()) {
+            KeepAliveService.start(this)
+        }
         super.onTaskRemoved(rootIntent)
     }
 
@@ -102,14 +109,14 @@ class DaemonService : Service() {
         Log.w(TAG, "Daemon destroyed - restarting both services")
         pingRunnable?.let { handler?.removeCallbacks(it) }
         handlerThread?.quitSafely()
-        scheduleRestart()
-        // 立即重启KeepAliveService（加冷却判断）
+        scheduleRestart(300)
+        scheduleJobRestart()
         if (AppState.canStartKeepAlive()) {
             KeepAliveService.start(this)
         }
     }
 
-    private fun scheduleRestart() {
+    private fun scheduleRestart(delayMs: Long = 300) {
         try {
             val restartIntent = Intent(this, DaemonService::class.java)
             val pi = PendingIntent.getService(
@@ -117,7 +124,7 @@ class DaemonService : Service() {
                 PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE
             )
             val am = getSystemService(ALARM_SERVICE) as AlarmManager
-            val trigger = SystemClock.elapsedRealtime() + 300
+            val trigger = SystemClock.elapsedRealtime() + delayMs
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 am.setExactAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, trigger, pi)
             } else {
@@ -125,8 +132,25 @@ class DaemonService : Service() {
             }
         } catch (e: Exception) {
             Log.e(TAG, "Schedule restart failed", e)
-            // 直接重启
             try { start(this) } catch (_: Exception) {}
+        }
+    }
+
+    private fun scheduleJobRestart() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                val js = getSystemService(Context.JOB_SCHEDULER_SERVICE) as android.app.job.JobScheduler
+                val component = ComponentName(this, KeepAliveJobService::class.java)
+                val jobInfo = JobInfo.Builder(JOB_ID_DAEMON_RESTART, component)
+                    .setMinimumLatency(1000)
+                    .setOverrideDeadline(3000)
+                    .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
+                    .setPersisted(true)
+                    .build()
+                js.schedule(jobInfo)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to schedule job restart", e)
         }
     }
 
