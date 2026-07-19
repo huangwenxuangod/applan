@@ -35,10 +35,21 @@ object BlockOverlay {
     @Volatile
     private var isShowing = false
 
+    @Volatile
+    private var lastShowTime = 0L // 上次show的时间戳，用于防止遮罩自身的a11y事件导致闪屏
+
     private var overlayView: View? = null
     private var windowManager: WindowManager? = null
     private val mainHandler = Handler(Looper.getMainLooper())
     private var hideRunnable: Runnable? = null
+
+    /**
+     * 遮罩是否刚显示（在指定时间窗口内）
+     * 用于防止遮罩自身的TYPE_WINDOW_STATE_CHANGED事件被误判为Activity回到前台
+     */
+    fun wasJustShown(withinMs: Long = 1500L): Boolean {
+        return isShowing && (System.currentTimeMillis() - lastShowTime < withinMs)
+    }
 
     /**
      * 显示全局拦截遮罩（毫秒级响应）
@@ -58,6 +69,10 @@ object BlockOverlay {
             return
         }
 
+        // 取消之前的hideRunnable（防止快速show/hide竞态）
+        hideRunnable?.let { mainHandler.removeCallbacks(it) }
+        hideRunnable = null
+
         try {
             val wm = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
             windowManager = wm
@@ -72,7 +87,8 @@ object BlockOverlay {
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                         WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
-                        WindowManager.LayoutParams.FLAG_DIM_BEHIND,
+                        WindowManager.LayoutParams.FLAG_DIM_BEHIND or
+                        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, // 不获取焦点，避免抢占输入法
                 PixelFormat.TRANSLUCENT
             ).apply {
                 gravity = Gravity.TOP or Gravity.START
@@ -81,6 +97,7 @@ object BlockOverlay {
             wm.addView(layout, params)
             overlayView = layout
             isShowing = true
+            lastShowTime = System.currentTimeMillis()
             Log.d(TAG, "Block overlay SHOWN - waiting for user to tap return button")
 
         } catch (e: Exception) {

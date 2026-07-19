@@ -1,0 +1,14 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- 长线 -->
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M3,7h18v2H3z" />
+    <!-- 短线（豆包风格：一长一短） -->
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M3,15h11v2H3z" />
+</vector>

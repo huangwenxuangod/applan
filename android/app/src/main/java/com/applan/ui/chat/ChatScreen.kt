@@ -32,6 +32,7 @@ fun ChatScreen(
     onLockScreen: () -> Unit = {},
     onExitApp: () -> Unit = {},
     onSettingsClick: () -> Unit,
+    onDashboardClick: () -> Unit = {},
     onEmergencyUnlock: () -> Unit = {},
     onGrantPlan: ((GrantPlanResult) -> Unit)? = null
 ) {
@@ -69,6 +70,16 @@ fun ChatScreen(
                         fontWeight = FontWeight.Bold,
                         fontSize = 20.sp
                     )
+                },
+                navigationIcon = {
+                    IconButton(onClick = onDashboardClick) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_menu),
+                            contentDescription = "看板",
+                            modifier = Modifier.size(22.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 },
                 actions = {
                     IconButton(onClick = onEmergencyUnlock) {
@@ -114,7 +125,7 @@ fun ChatScreen(
                         onValueChange = { inputText = it },
                         modifier = Modifier.weight(1f),
                         placeholder = {
-                            Text("说清楚你要干嘛…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("和applan对话…", color = MaterialTheme.colorScheme.onSurfaceVariant)
                         },
                         shape = RoundedCornerShape(24.dp),
                         colors = OutlinedTextFieldDefaults.colors(
@@ -160,30 +171,16 @@ fun ChatScreen(
                 .fillMaxSize()
                 .padding(padding)
         ) {
-            if (uiState.showGreeting && uiState.messages.isEmpty()) {
+            if (uiState.messages.isEmpty() && !uiState.isConnecting && uiState.currentReply.isEmpty()) {
+                // 空状态：只显示锁图标，不主动说废话
                 Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            "🔒",
-                            fontSize = 48.sp,
-                            modifier = Modifier.padding(bottom = 16.dp)
-                        )
-                        Text(
-                            "你今天想要干嘛？",
-                            fontSize = 24.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onBackground
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            "说清楚，别找借口。",
-                            fontSize = 16.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                    Text(
+                        "🔒",
+                        fontSize = 48.sp
+                    )
                 }
             } else {
                 LazyColumn(

@@ -144,7 +144,7 @@ class KeepAliveService : Service() {
                         // 只显示遮罩，不自动拉起Activity（避免闪屏）
                         // 用户通过点击遮罩上的"返回applan"按钮回来
                         if (AppState.shouldBlock() && !AppState.isActivityInForeground) {
-                            if (!BlockOverlay.isShowing()) {
+                            if (!BlockOverlay.isShowing() && !BlockOverlay.wasJustShown(2000)) {
                                 mainHandler.post { BlockOverlay.show(this@KeepAliveService) }
                             }
                         }
@@ -258,7 +258,9 @@ class KeepAliveService : Service() {
                 if (action == Intent.ACTION_SCREEN_ON || action == Intent.ACTION_USER_PRESENT) {
                     handler?.postDelayed({
                         if (AppState.shouldBlock() && !AppState.isActivityInForeground) {
-                            mainHandler.post { BlockOverlay.show(context) }
+                            if (!BlockOverlay.isShowing() && !BlockOverlay.wasJustShown(2000)) {
+                                mainHandler.post { BlockOverlay.show(context) }
+                            }
                         }
                     }, 200)
                 }

@@ -23,6 +23,7 @@ import com.applan.service.KeepAliveService
 import com.applan.service.LockAccessibilityService
 import com.applan.ui.chat.ChatScreen
 import com.applan.ui.chat.ChatViewModel
+import com.applan.ui.dashboard.DashboardScreen
 import com.applan.ui.emergency.EmergencyUnlockScreen
 import com.applan.ui.onboarding.OnboardingScreen
 import com.applan.ui.settings.SettingsScreen
@@ -44,6 +45,7 @@ sealed class Screen {
     object Chat : Screen()
     object Settings : Screen()
     object EmergencyUnlock : Screen()
+    object Dashboard : Screen()
 }
 
 private const val PREFS_NAME = "appplan_prefs"
@@ -221,6 +223,9 @@ fun ApplanApp(context: Context) {
                 is Screen.EmergencyUnlock -> {
                     currentScreen = Screen.Chat
                 }
+                is Screen.Dashboard -> {
+                    currentScreen = Screen.Chat
+                }
                 is Screen.Chat -> {
                     // 聊天页：完全拦截，不做任何操作，不退出App
                     // 用户只能通过AI放行或紧急解锁才能离开
@@ -343,6 +348,7 @@ fun ApplanApp(context: Context) {
                         onLockScreen = { handleLockScreen() },
                         onExitApp = { handleExitApp() },
                         onSettingsClick = { goToSettings() },
+                        onDashboardClick = { currentScreen = Screen.Dashboard },
                         onEmergencyUnlock = { currentScreen = Screen.EmergencyUnlock },
                         onGrantPlan = { result -> handleGrantPlan(result) }
                     )
@@ -368,6 +374,9 @@ fun ApplanApp(context: Context) {
                     )
                     is Screen.EmergencyUnlock -> EmergencyUnlockScreen(
                         onUnlockSuccess = { emergencyUnlock() },
+                        onBack = { currentScreen = Screen.Chat }
+                    )
+                    is Screen.Dashboard -> DashboardScreen(
                         onBack = { currentScreen = Screen.Chat }
                     )
                 }

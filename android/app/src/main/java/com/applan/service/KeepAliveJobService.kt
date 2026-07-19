@@ -45,7 +45,8 @@ class KeepAliveJobService : JobService() {
                 if (AppState.shouldBlock() && !AppState.isActivityInForeground && !AppConfig.isExitGranted()) {
                     handler.post {
                         try {
-                            if (!BlockOverlay.isShowing() && android.provider.Settings.canDrawOverlays(this)) {
+                            if (!BlockOverlay.isShowing() && !BlockOverlay.wasJustShown(2000)
+                                && android.provider.Settings.canDrawOverlays(this)) {
                                 BlockOverlay.show(this)
                             }
                         } catch (e: Exception) {

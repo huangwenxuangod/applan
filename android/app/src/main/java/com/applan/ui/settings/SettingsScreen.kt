@@ -26,6 +26,7 @@ import com.applan.util.AppConfig
 import com.applan.util.AppState
 import com.applan.util.AppUpdateManager
 import com.applan.util.AutoStartHelper
+import com.applan.util.EmergencyKeyGenerator
 import com.applan.util.PermissionHelper
 import kotlinx.coroutines.launch
 
@@ -285,7 +286,7 @@ fun SettingsScreen(
                     )
                 ) {
                     NavItem(
-                        title = "紧急解锁（8位密钥）",
+                        title = "紧急解锁（${EmergencyKeyGenerator.keyLength()}位密钥）",
                         desc = "AI无法判断时的硬保底，每次随机生成",
                         onClick = onEmergencyUnlock,
                         titleColor = MaterialTheme.colorScheme.error

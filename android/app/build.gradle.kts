@@ -11,8 +11,8 @@ android {
         applicationId = "com.applan"
         minSdk = 24
         targetSdk = 35
-        versionCode = 5
-        versionName = "1.5.0"
+        versionCode = 6
+        versionName = "1.5.1"
 
         // === 服务器配置（在这里修改，不需要在APP内设置）===
         buildConfigField("String", "SERVER_URL", "\"http://129.204.200.38:8799\"")

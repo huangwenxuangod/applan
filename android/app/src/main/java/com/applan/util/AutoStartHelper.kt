@@ -11,12 +11,19 @@ import android.util.Log
 /**
  * 跳转到各大厂商自启动管理页面 + 后台弹出界面权限
  *
- * 2025年7月更新：基于多源交叉验证的最新Activity路径
- * 由于Android没有统一API，只能硬编码各厂商路径。
- * 每个厂商提供多个fallback路径，按优先级排序。
+ * 2025年7月19日更新：基于多源交叉验证（CSDN 2026-07更新、掘金、腾讯云、GitHub开源项目）
+ * 修正了之前错误的路径：
+ * - 删除了不存在的 com.oplus.safecenter.ui.bgpopup.BgPopUpManagerActivity
+ * - 修正OPPO自启动路径：正确是 com.coloros.safecenter/.startupapp.StartupAppListActivity（无.view子包）
+ * - com.oplus.safecenter作为ColorOS 14+的fallback尝试
+ * - 新增Vivo OriginOS新路径 VivoAutoLaunchManagerActivity
+ * - 新增MIUI专属Action miui.intent.action.OP_AUTO_START
+ * - 新增华为startupapp子包路径
+ * - 完善三星国行/国际版双路径
  *
- * 路径来源：CSDN技术博客(2024-10更新)、Xamarin社区(2026-07更新)、
- * 腾讯云开发者社区、华为开发者论坛等。
+ * 重要说明：虽然用户UI路径是"设置→应用→自启动"，但设置应用只是一个外壳，
+ * 实际承载自启动管理的Activity在各厂商的安全中心/手机管家包中。
+ * com.android.settings中没有直接的自启动管理Activity。
  */
 object AutoStartHelper {
 
@@ -30,12 +37,15 @@ object AutoStartHelper {
         val extraValue: String? = null
     )
 
-    // ==================== 自启动管理路径（2025年验证） ====================
+    // ==================== 自启动管理路径（2025年7月验证） ====================
 
     private val VENDOR_AUTOSTART_TARGETS = mapOf(
         // ===== 小米/红米 - MIUI/HyperOS =====
+        // 最主要路径：AutoStartManagementActivity（MIUI10到HyperOS3均可用）
         "xiaomi" to listOf(
             AutoStartTarget("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity"),
+            // MIUI专属Action（无需ComponentName）
+            AutoStartTarget("com.miui.securitycenter", "", action = "miui.intent.action.OP_AUTO_START"),
             AutoStartTarget("com.miui.securitycenter", "com.miui.appmanager.ApplicationsDetailsActivity"),
             AutoStartTarget("com.miui.securitycenter", "com.miui.permcenter.permissions.PermissionsEditorActivity")
         ),
@@ -45,55 +55,68 @@ object AutoStartHelper {
         ),
 
         // ===== 华为 - EMUI/HarmonyOS =====
+        // 最主要路径：StartupNormalAppListActivity（EMUI9+验证最多）
         "huawei" to listOf(
             AutoStartTarget("com.huawei.systemmanager", "com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity"),
+            AutoStartTarget("com.huawei.systemmanager", "com.huawei.systemmanager.startupmgr.ui.startupapp.StartupAppListActivity"),
             AutoStartTarget("com.huawei.systemmanager", "com.huawei.systemmanager.appcontrol.activity.StartupAppControlActivity"),
             AutoStartTarget("com.huawei.systemmanager", "com.huawei.systemmanager.optimize.process.ProtectActivity"),
             AutoStartTarget("com.huawei.systemmanager", "com.huawei.systemmanager.optimize.bootstart.BootStartActivity")
         ),
 
-        // ===== 荣耀 - MagicOS (独立后使用hihonor包名) =====
+        // ===== 荣耀 - MagicOS =====
+        // 荣耀独立后仍大量使用com.huawei.systemmanager，com.hihonor作为fallback
         "honor" to listOf(
+            AutoStartTarget("com.huawei.systemmanager", "com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity"),
             AutoStartTarget("com.hihonor.systemmanager", "com.hihonor.systemmanager.startupmgr.ui.StartupNormalAppListActivity"),
             AutoStartTarget("com.hihonor.systemmanager", "com.hihonor.systemmanager.appcontrol.activity.StartupAppControlActivity"),
-            AutoStartTarget("com.hihonor.systemmanager", "com.hihonor.systemmanager.optimize.process.ProtectActivity"),
-            AutoStartTarget("com.huawei.systemmanager", "com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity")
+            AutoStartTarget("com.huawei.systemmanager", "com.huawei.systemmanager.appcontrol.activity.StartupAppControlActivity")
         ),
 
-        // ===== OPPO - ColorOS 14/15 (oplus包名) / 旧版 (coloros包名) =====
+        // ===== OPPO - ColorOS =====
+        // 最主要路径（验证最多）：com.coloros.safecenter/.startupapp.StartupAppListActivity
+        // 注意：之前错误地加了.view子包，正确路径没有.view
+        // ColorOS 12+新包名：com.oplus.safecenter
+        // ColorOS新版安全中心可能叫 com.coloros.securitycenter
         "oppo" to listOf(
-            // ColorOS 14/15 最新路径（含.view子包）
-            AutoStartTarget("com.oplus.safecenter", "com.oplus.safecenter.startupapp.view.StartupAppListActivity"),
-            AutoStartTarget("com.oplus.safecenter", "com.oplus.safecenter.permission.startup.StartupAppListActivity"),
-            // ColorOS 7-13
             AutoStartTarget("com.coloros.safecenter", "com.coloros.safecenter.startupapp.StartupAppListActivity"),
+            AutoStartTarget("com.oplus.safecenter", "com.oplus.safecenter.startupapp.StartupAppListActivity"),
+            AutoStartTarget("com.oplus.safecenter", "com.oplus.safecenter.startupapp.view.StartupAppListActivity"),
             AutoStartTarget("com.coloros.safecenter", "com.coloros.safecenter.permission.startup.StartupAppListActivity"),
-            // 极旧版
+            AutoStartTarget("com.coloros.safecenter", "com.coloros.safecenter.permission.startup.StartupAppListActivityForExternal"),
+            AutoStartTarget("com.coloros.safecenter", "com.coloros.safecenter.startupapp.AssociateStartActivity"),
+            AutoStartTarget("com.coloros.securitycenter", "com.coloros.securitycenter.startupapp.StartupAppListActivity"),
             AutoStartTarget("com.color.safecenter", "com.color.safecenter.permission.startup.StartupAppListActivity"),
-            AutoStartTarget("com.oppo.safe", "com.oppo.safe.permission.startup.StartupAppListActivity")
+            AutoStartTarget("com.oppo.safe", "com.oppo.safe.permission.startup.StartupAppListActivity"),
+            // 尝试通过Action启动（类似MIUI的OP_AUTO_START）
+            AutoStartTarget("com.coloros.safecenter", "", action = "com.coloros.safecenter.startupapp")
         ),
 
         // ===== Realme - realme UI (基于ColorOS) =====
         "realme" to listOf(
-            AutoStartTarget("com.oplus.safecenter", "com.oplus.safecenter.startupapp.view.StartupAppListActivity"),
             AutoStartTarget("com.coloros.safecenter", "com.coloros.safecenter.startupapp.StartupAppListActivity"),
-            AutoStartTarget("com.coloros.safecenter", "com.coloros.safecenter.permission.startup.StartupAppListActivity")
+            AutoStartTarget("com.oplus.safecenter", "com.oplus.safecenter.startupapp.StartupAppListActivity"),
+            AutoStartTarget("com.coloros.safecenter", "com.coloros.safecenter.permission.startup.StartupAppListActivity"),
+            AutoStartTarget("com.coloros.securitycenter", "com.coloros.securitycenter.startupapp.StartupAppListActivity"),
+            AutoStartTarget("com.color.safecenter", "com.color.safecenter.permission.startup.StartupAppListActivity")
         ),
 
-        // ===== OnePlus - 氢OS/OxygenOS (ColorOS 13+使用oplus包名) =====
+        // ===== OnePlus - 氢OS/OxygenOS =====
+        // ColorOS 13+使用coloros/oplus包名，旧版氢OS使用oneplus.security
         "oneplus" to listOf(
-            // ColorOS 13+ 新路径
-            AutoStartTarget("com.oplus.safecenter", "com.oplus.safecenter.startupapp.view.StartupAppListActivity"),
-            AutoStartTarget("com.oplus.safecenter", "com.oplus.safecenter.permission.startup.StartupAppListActivity"),
             AutoStartTarget("com.coloros.safecenter", "com.coloros.safecenter.startupapp.StartupAppListActivity"),
+            AutoStartTarget("com.oplus.safecenter", "com.oplus.safecenter.startupapp.StartupAppListActivity"),
             AutoStartTarget("com.coloros.safecenter", "com.coloros.safecenter.permission.startup.StartupAppListActivity"),
-            // 旧版氢OS
+            AutoStartTarget("com.coloros.securitycenter", "com.coloros.securitycenter.startupapp.StartupAppListActivity"),
             AutoStartTarget("com.oneplus.security", "com.oneplus.security.chainlaunch.view.ChainLaunchAppListActivity")
         ),
 
         // ===== Vivo/iQOO - OriginOS/FuntouchOS =====
+        // 主要路径：BgStartUpManagerActivity
+        // 新版OriginOS新增：VivoAutoLaunchManagerActivity
         "vivo" to listOf(
             AutoStartTarget("com.vivo.permissionmanager", "com.vivo.permissionmanager.activity.BgStartUpManagerActivity"),
+            AutoStartTarget("com.vivo.abeui", "com.vivo.abeui.manager.VivoAutoLaunchManagerActivity"),
             AutoStartTarget("com.vivo.permissionmanager", "com.vivo.permissionmanager.activity.BgStartControlActivity"),
             AutoStartTarget("com.vivo.permissionmanager", "com.vivo.permissionmanager.activity.PurviewTabActivity"),
             AutoStartTarget("com.iqoo.secure", "com.iqoo.secure.ui.phoneoptimize.BgStartUpManager"),
@@ -108,11 +131,12 @@ object AutoStartHelper {
 
         // ===== 三星 - OneUI (国行sm_cn / 国际版sm) =====
         "samsung" to listOf(
-            // 国行自动运行
+            // 国行优先
             AutoStartTarget("com.samsung.android.sm_cn", "com.samsung.android.sm.ui.ram.AutoRunActivity"),
             AutoStartTarget("com.samsung.android.sm_cn", "com.samsung.android.sm.ui.appmanagement.AppManagementActivity"),
             AutoStartTarget("com.samsung.android.sm_cn", "com.samsung.android.sm.ui.cstyleboard.SmartManagerDashBoardActivity"),
-            // 国际版自动运行
+            AutoStartTarget("com.samsung.android.sm_cn", "com.samsung.android.sm.app.dashboard.SmartManagerDashBoardActivity"),
+            // 国际版
             AutoStartTarget("com.samsung.android.sm", "com.samsung.android.sm.ui.ram.AutoRunActivity"),
             AutoStartTarget("com.samsung.android.sm", "com.samsung.android.sm.ui.appmanagement.AppManagementActivity"),
             AutoStartTarget("com.samsung.android.sm", "com.samsung.android.sm.ui.cstyleboard.SmartManagerDashBoardActivity"),
@@ -124,11 +148,6 @@ object AutoStartHelper {
         "meizu" to listOf(
             AutoStartTarget("com.meizu.safe", "com.meizu.safe.permission.SmartBGActivity"),
             AutoStartTarget("com.meizu.safe", "com.meizu.safe.security.SHOW_APPSEC")
-        ),
-
-        // ===== 锤子/坚果 - SmartisanOS =====
-        "smartisan" to listOf(
-            AutoStartTarget("com.smartisanos.security", "com.smartisanos.security.PermissionActivity")
         ),
 
         // ===== 联想/ZUI =====
@@ -160,18 +179,24 @@ object AutoStartHelper {
             AutoStartTarget("com.nubia.security2", "com.nubia.security.privacymanage.activity.AutoStartActivity")
         ),
 
-        // ===== OPPO一加的品牌名兜底 =====
+        // ===== OPPO/OnePlus品牌名兜底 =====
         "oplus" to listOf(
-            AutoStartTarget("com.oplus.safecenter", "com.oplus.safecenter.startupapp.view.StartupAppListActivity")
+            AutoStartTarget("com.coloros.safecenter", "com.coloros.safecenter.startupapp.StartupAppListActivity"),
+            AutoStartTarget("com.oplus.safecenter", "com.oplus.safecenter.startupapp.StartupAppListActivity"),
+            AutoStartTarget("com.coloros.securitycenter", "com.coloros.securitycenter.startupapp.StartupAppListActivity")
+        ),
+        "coloros" to listOf(
+            AutoStartTarget("com.coloros.safecenter", "com.coloros.safecenter.startupapp.StartupAppListActivity"),
+            AutoStartTarget("com.oplus.safecenter", "com.oplus.safecenter.startupapp.StartupAppListActivity"),
+            AutoStartTarget("com.coloros.securitycenter", "com.coloros.securitycenter.startupapp.StartupAppListActivity")
         )
     )
 
-    // ==================== 后台弹出界面权限路径（2025年验证） ====================
+    // ==================== 后台弹出界面权限路径 ====================
     // 这个权限决定了Service能否在后台startActivity/显示悬浮窗
-    // 不同ROM实现差异巨大，部分ROM无独立页面
 
     private val VENDOR_BG_POPUP_TARGETS = mapOf(
-        // ===== 小米/红米 - 后台弹出界面在权限编辑器中 =====
+        // ===== 小米/红米 =====
         "xiaomi" to listOf(
             AutoStartTarget("com.miui.securitycenter", "com.miui.permcenter.permissions.PermissionsEditorActivity"),
             AutoStartTarget("com.miui.securitycenter", "com.miui.appmanager.ApplicationsDetailsActivity")
@@ -180,28 +205,27 @@ object AutoStartHelper {
             AutoStartTarget("com.miui.securitycenter", "com.miui.permcenter.permissions.PermissionsEditorActivity")
         ),
 
-        // ===== OPPO/OnePlus/Realme - ColorOS无独立BgPopUp页面 =====
-        // 网传的ui.bgpopup.BgPopUpManagerActivity经多源验证不存在
+        // ===== OPPO/OnePlus/Realme =====
+        // ColorOS没有独立的BgPopUpManager页面（网传的ui.bgpopup.BgPopUpManagerActivity不存在）
         // 正确策略：引导到权限隐私主页 / 悬浮窗权限页
         "oppo" to listOf(
             AutoStartTarget("com.coloros.safecenter", "com.coloros.privacypermissionsentry.PermissionTopActivity"),
             AutoStartTarget("com.coloros.safecenter", "com.coloros.safecenter.permission.floatwindow.FloatWindowListActivity"),
             AutoStartTarget("com.coloros.safecenter", "com.coloros.safecenter.sysfloatwindow.FloatWindowPermissionActivity"),
-            AutoStartTarget("com.oplus.safecenter", "com.oplus.safecenter.startupapp.view.StartupAppListActivity")
+            AutoStartTarget("com.coloros.safecenter", "com.coloros.safecenter.startupapp.StartupAppListActivity")
         ),
         "oneplus" to listOf(
             AutoStartTarget("com.coloros.safecenter", "com.coloros.privacypermissionsentry.PermissionTopActivity"),
             AutoStartTarget("com.coloros.safecenter", "com.coloros.safecenter.permission.floatwindow.FloatWindowListActivity"),
-            AutoStartTarget("com.oplus.safecenter", "com.oplus.safecenter.startupapp.view.StartupAppListActivity")
+            AutoStartTarget("com.coloros.safecenter", "com.coloros.safecenter.startupapp.StartupAppListActivity")
         ),
         "realme" to listOf(
             AutoStartTarget("com.coloros.safecenter", "com.coloros.privacypermissionsentry.PermissionTopActivity"),
-            AutoStartTarget("com.oplus.safecenter", "com.oplus.safecenter.startupapp.view.StartupAppListActivity")
+            AutoStartTarget("com.coloros.safecenter", "com.coloros.safecenter.startupapp.StartupAppListActivity")
         ),
 
-        // ===== Vivo/iQOO - 后台弹出界面有独立页面 =====
+        // ===== Vivo/iQOO =====
         "vivo" to listOf(
-            // 需要特殊action的权限详情页（最直接）
             AutoStartTarget(
                 "com.vivo.permissionmanager",
                 "com.vivo.permissionmanager.activity.SoftPermissionDetailActivity",
@@ -209,7 +233,6 @@ object AutoStartHelper {
             ),
             AutoStartTarget("com.vivo.permissionmanager", "com.vivo.permissionmanager.activity.StartBgActivityControlActivity"),
             AutoStartTarget("com.vivo.permissionmanager", "com.vivo.permissionmanager.activity.PurviewTabActivity"),
-            // iQOO旧版
             AutoStartTarget("com.iqoo.secure", "com.iqoo.secure.safeguard.SoftPermissionDetailActivity")
         ),
         "iqoo" to listOf(
@@ -228,11 +251,11 @@ object AutoStartHelper {
             AutoStartTarget("com.huawei.systemmanager", "com.huawei.systemmanager.optimize.process.ProtectActivity")
         ),
         "honor" to listOf(
-            AutoStartTarget("com.hihonor.systemmanager", "com.hihonor.systemmanager.startupmgr.ui.StartupNormalAppListActivity"),
+            AutoStartTarget("com.huawei.systemmanager", "com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity"),
             AutoStartTarget("com.hihonor.systemmanager", "com.hihonor.systemmanager.power.ui.HwPowerManagerActivity")
         ),
 
-        // ===== 三星 - 通过自动运行+电池优化管理 =====
+        // ===== 三星 =====
         "samsung" to listOf(
             AutoStartTarget("com.samsung.android.sm_cn", "com.samsung.android.sm.ui.ram.AutoRunActivity"),
             AutoStartTarget("com.samsung.android.sm", "com.samsung.android.sm.ui.ram.AutoRunActivity"),
@@ -249,7 +272,26 @@ object AutoStartHelper {
 
     /**
      * 跳转到自启动管理页面
-     * 路径策略：厂商专属页面 → 应用管理列表页 → 应用详情页 → 系统设置主页
+     *
+     * 核心策略（2025年7月19日第二次修正）：
+     *
+     * 关键背景：
+     * - 用户描述的路径是 设置→应用→自启动，但"应用"页面在ColorOS设置中是一个Fragment，
+     *   没有公开Intent可以直达该父页面。
+     * - Settings.ACTION_APPLICATION_SETTINGS 在ColorOS上会直接跳转到"应用管理"列表页，
+     *   而不是"应用"父页面，这是用户反复反馈的问题根源。
+     * - 因此，最佳方案是：直接跳自启动列表页（用户最终要操作的开关页面），一步到位。
+     *
+     * 策略顺序：
+     * 1. 厂商深度链接 → 直接打开自启动管理列表页（用户可以直接看到applan的开关）
+     *    OPPO/Realme/OnePlus: com.coloros.safecenter/.startupapp.StartupAppListActivity
+     *    ColorOS 14+: com.oplus.safecenter/.startupapp.StartupAppListActivity
+     *    MIUI/HyperOS: com.miui.securitycenter/.../AutoStartManagementActivity
+     *    Vivo/OriginOS: com.vivo.permissionmanager/.../BgStartUpManagerActivity
+     *    华为/HarmonyOS: com.huawei.systemmanager/.../StartupNormalAppListActivity
+     * 2. 对于非ColorOS系厂商，尝试 ACTION_APPLICATION_SETTINGS（在AOSP/MIUI/vivo上是应用首页）
+     *    注意：ColorOS系（oppo/realme/oneplus）跳过此步，因为它会直接跳应用管理
+     * 3. 跳系统设置主页（最安全的兜底）
      */
     fun jumpToAutoStartSetting(context: Context) {
         val manufacturer = Build.MANUFACTURER.lowercase().trim()
@@ -257,45 +299,52 @@ object AutoStartHelper {
 
         Log.d(TAG, "jumpToAutoStartSetting: manufacturer=$manufacturer, brand=$brand")
 
-        // 策略1：尝试厂商专属自启动页面（同时匹配manufacturer和brand）
+        // 判断是否是ColorOS系（这些ROM上ACTION_APPLICATION_SETTINGS会直接跳应用管理，是错的）
+        val isColorOS = manufacturer in listOf("oppo", "realme", "oneplus")
+                || brand in listOf("oppo", "realme", "oneplus", "coloros", "oplus")
+
+        // 策略1（首选）：厂商深度链接 → 直接打开自启动管理列表页
         val targets = VENDOR_AUTOSTART_TARGETS[manufacturer]
             ?: VENDOR_AUTOSTART_TARGETS[brand]
 
         if (targets != null) {
             for (target in targets) {
                 if (tryStartActivity(context, target)) {
-                    Log.d(TAG, "AutoStart: jumped to ${target.pkg}/${target.cls}")
+                    Log.d(TAG, "AutoStart: jumped directly to ${target.pkg}/${target.cls}")
                     return
                 }
             }
         }
 
-        // 策略2：跳转到应用管理列表页
-        Log.d(TAG, "No vendor autostart target worked, trying app list settings")
-        if (tryJumpToAppListSettings(context)) return
+        // 策略2（非ColorOS系才尝试）：ACTION_APPLICATION_SETTINGS
+        // 在AOSP/MIUI/vivo/华为上通常打开"应用"分类首页，包含自启动入口
+        // 但在ColorOS上它直接跳"应用管理"列表，所以ColorOS系跳过
+        if (!isColorOS) {
+            try {
+                val intent = Intent(Settings.ACTION_APPLICATION_SETTINGS)
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(intent)
+                Log.d(TAG, "AutoStart: opened Settings > Apps via ACTION_APPLICATION_SETTINGS")
+                return
+            } catch (e: Exception) {
+                Log.d(TAG, "ACTION_APPLICATION_SETTINGS failed", e)
+            }
+        }
 
-        // 策略3：跳转到应用详情页（用户可手动找权限）
-        if (tryJumpToAppDetails(context)) return
-
-        // 策略4：跳系统设置主页
+        // 策略3（最终兜底）：跳系统设置主页
+        // 用户至少能看到设置首页，不会被误导到错误的"应用管理"页
         try {
             val intent = Intent(Settings.ACTION_SETTINGS)
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             context.startActivity(intent)
+            Log.d(TAG, "AutoStart: fallback to Settings main page")
         } catch (e: Exception) {
-            Log.e(TAG, "Cannot open settings", e)
+            Log.e(TAG, "Cannot open settings at all", e)
         }
     }
 
     /**
      * 跳转到后台弹出界面权限设置
-     * 这个权限决定了Service能否在后台startActivity/显示悬浮窗
-     *
-     * 重要说明：
-     * - ColorOS/OPPO：网传BgPopUpManagerActivity不存在，实际通过权限隐私主页/悬浮窗页引导
-     * - Vivo/iQOO：有独立页面，SoftPermissionDetailActivity需特殊action
-     * - MIUI：在PermissionsEditorActivity中
-     * - 华为/三星：无独立页面，通过自启动+电池优化管理
      */
     fun jumpToBgPopupSetting(context: Context) {
         val manufacturer = Build.MANUFACTURER.lowercase().trim()
@@ -337,7 +386,6 @@ object AutoStartHelper {
         } catch (e: Exception) {
             Log.e(TAG, "Failed to open overlay setting", e)
         }
-        // fallback到应用详情
         tryJumpToAppDetails(context)
     }
 
@@ -357,11 +405,11 @@ object AutoStartHelper {
             Log.e(TAG, "Failed to open battery optimization", e)
         }
 
-        // 厂商电池优化页面
         val manufacturer = Build.MANUFACTURER.lowercase().trim()
         val batteryTargets = mapOf(
             "xiaomi" to listOf(
-                AutoStartTarget("com.miui.powerkeeper", "com.miui.powerkeeper.ui.HiddenAppsConfigActivity")
+                AutoStartTarget("com.miui.powerkeeper", "com.miui.powerkeeper.ui.HiddenAppsConfigActivity"),
+                AutoStartTarget("com.miui.powerkeeper", "com.miui.powerkeeper.ui.HiddenAppsContainerManagementActivity")
             ),
             "samsung" to listOf(
                 AutoStartTarget("com.samsung.android.lool", "com.samsung.android.sm.ui.battery.BatteryActivity"),
@@ -382,7 +430,6 @@ object AutoStartHelper {
             }
         }
 
-        // fallback
         jumpToAutoStartSetting(context)
     }
 
@@ -394,13 +441,19 @@ object AutoStartHelper {
             if (target.action != null) {
                 intent.action = target.action
             }
-            intent.component = ComponentName(target.pkg, target.cls)
+            if (target.cls.isNotEmpty()) {
+                intent.component = ComponentName(target.pkg, target.cls)
+            } else if (target.pkg.isNotEmpty()) {
+                // 有action无cls时设置package
+                intent.`package` = target.pkg
+            }
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 
             // 传递包名extra（不同ROM读取不同key，全部带上）
             intent.putExtra("package_name", context.packageName)
             intent.putExtra("packagename", context.packageName)
             intent.putExtra("packageName", context.packageName)
+            intent.putExtra("extra_pkgname", context.packageName)
 
             if (target.extraKey != null && target.extraValue != null) {
                 intent.putExtra(target.extraKey, target.extraValue)
@@ -416,19 +469,12 @@ object AutoStartHelper {
 
     private fun tryJumpToAppListSettings(context: Context): Boolean {
         val intents = listOf(
-            // ColorOS/OPPO 应用管理
-            Intent().apply {
-                component = ComponentName("com.android.settings", "com.android.settings.applications.ManageApplications")
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            },
-            // 通用应用列表
             Intent(Settings.ACTION_APPLICATION_SETTINGS).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             },
             Intent(Settings.ACTION_MANAGE_ALL_APPLICATIONS_SETTINGS).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             },
-            // ACTION_APPLICATION_DETAILS_SETTINGS 不带data = 应用列表
             Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
