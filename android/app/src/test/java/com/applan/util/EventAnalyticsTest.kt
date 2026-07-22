@@ -23,4 +23,18 @@ class EventAnalyticsTest {
         assertEquals("com.ss.android.ugc.aweme", summary.topApps.first().packageName)
         assertEquals(2, summary.topApps.first().count)
     }
+
+    @Test
+    fun `temporary pass quota counts only successful passes in the local day`() {
+        val day = 1_700_000_000_000L
+        val events = listOf(
+            PolicyEvent("1", "temporary_pass_granted", day, "com.sankuai.meituan"),
+            PolicyEvent("2", "temporary_pass_granted", day + 1, "com.tencent.mm"),
+            PolicyEvent("3", "temporary_pass_granted", day + 2, "com.tencent.mm"),
+            PolicyEvent("4", "temporary_pass_granted", day - 1, "com.eg.android.AlipayGphone")
+        )
+
+        assertEquals(3, EventAnalytics.temporaryPassCount(events, day, day + 86_400_000))
+        assertEquals(2, EventAnalytics.remainingTemporaryPasses(events, day, day + 86_400_000))
+    }
 }

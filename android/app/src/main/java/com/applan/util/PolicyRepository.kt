@@ -56,7 +56,9 @@ class PolicyRepository(context: Context) {
             AiPlan(
                 allowedPackages = item.getJSONArray("allowedPackages").toStringSet(),
                 purpose = item.getString("purpose"),
-                expiresAt = item.getLong("expiresAt")
+                expiresAt = item.getLong("expiresAt"),
+                id = item.optString("id").ifBlank { java.util.UUID.randomUUID().toString() },
+                startedAt = item.optLong("startedAt", System.currentTimeMillis())
             )
         } catch (_: Exception) {
             null
@@ -70,6 +72,8 @@ class PolicyRepository(context: Context) {
                 put("allowedPackages", JSONArray(plan.allowedPackages.toList()))
                 put("purpose", plan.purpose)
                 put("expiresAt", plan.expiresAt)
+                put("id", plan.id)
+                put("startedAt", plan.startedAt)
             }.toString()
         ).apply()
     }

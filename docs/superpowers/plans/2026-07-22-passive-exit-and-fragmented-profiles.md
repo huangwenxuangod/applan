@@ -93,3 +93,19 @@
 - [ ] Run `gradle :app:testDebugUnitTest`.
 - [ ] Run `gradle :app:assembleDebug`.
 - [ ] Install only on explicit request; manual acceptance is: normal exit then open WeChat during an active profile (no overlay), enable Plan Mode and open a non-allowed app (overlay), tap temporary pass (same app usable for five minutes), then confirm a second non-allowed app remains blocked.
+
+### Task 6: Plan lifecycle events and sync compatibility
+
+**Files:**
+- Modify: `android/app/src/main/java/com/applan/util/PolicyModels.kt`
+- Modify: `android/app/src/main/java/com/applan/util/PolicyRepository.kt`
+- Modify: `android/app/src/main/java/com/applan/ui/App.kt`
+- Modify: `android/app/src/main/java/com/applan/util/EventAnalytics.kt`
+- Modify: `android/app/src/main/java/com/applan/ui/dashboard/DashboardScreen.kt`
+
+**Decision:** The device remains the lifecycle authority. The existing generic `/v1/events/batch` endpoint accepts and deduplicates arbitrary event names, so no server migration is needed for `plan_started`, `plan_ended_early`, or `plan_expired`.
+
+- [x] Add stable plan ID and start time while preserving old saved plan JSON.
+- [x] Record plan start, early end, and expiry locally for later batch sync.
+- [x] Show today's plan-start count in Dashboard.
+- [x] Verify with `gradle :app:testDebugUnitTest` and `gradle :app:assembleDebug`.

@@ -1,6 +1,7 @@
 package com.applan.util
 
 import java.util.Calendar
+import java.util.UUID
 
 data class TimeProfile(
     val id: String,
@@ -13,7 +14,9 @@ data class TimeProfile(
 data class AiPlan(
     val allowedPackages: Set<String>,
     val purpose: String,
-    val expiresAt: Long
+    val expiresAt: Long,
+    val id: String = UUID.randomUUID().toString(),
+    val startedAt: Long = System.currentTimeMillis()
 )
 
 data class TemporaryPass(

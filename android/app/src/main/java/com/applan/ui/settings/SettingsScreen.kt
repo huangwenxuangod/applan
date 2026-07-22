@@ -89,6 +89,9 @@ fun SettingsScreen(
     val isDefaultLauncher by remember(permissionVersion) {
         derivedStateOf { PermissionHelper.isDefaultLauncher(context) }
     }
+    val deviceAdminActive by remember(permissionVersion) {
+        derivedStateOf { PermissionHelper.isDeviceAdminActive(context) }
+    }
 
     // 严格模式状态
     var strictModeEnabled by remember(permissionVersion) {
@@ -374,6 +377,20 @@ fun SettingsScreen(
                                 openSettings { PermissionHelper.jumpToNotificationSettings(context) }
                             },
                             enabled = !strictModeEnabled
+                        )
+                        HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+                        ToggleItem(
+                            title = "防卸载",
+                            desc = if (deviceAdminActive) {
+                                "已启用，需先在系统设备管理员中关闭才能卸载"
+                            } else {
+                                "防止直接卸载，不阻止你在系统设置中取消此权限"
+                            },
+                            checked = deviceAdminActive,
+                            onCheckedChange = {
+                                if (!deviceAdminActive) PermissionHelper.requestDeviceAdmin(context)
+                            },
+                            showSwitch = false
                         )
                     }
                 }

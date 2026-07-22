@@ -337,6 +337,7 @@ fun ApplanApp(context: Context) {
                 )
             )
             PolicyEventStore(context).record("plan_granted", durationMinutes = result.timeoutMinutes.coerceIn(1, 60))
+            PolicyEventStore(context).record("plan_started", durationMinutes = result.timeoutMinutes.coerceIn(1, 60))
             BlockOverlay.hide()
             markNeedsReset()
             showTopToast(context, "计划放行：${result.planDescription}，${result.timeoutMinutes}分钟")
@@ -402,7 +403,15 @@ fun ApplanApp(context: Context) {
                         onBack = { currentScreen = Screen.Chat }
                     )
                     is Screen.Dashboard -> DashboardScreen(
-                        onBack = { currentScreen = Screen.Chat }
+                        onBack = { currentScreen = Screen.Chat },
+                        onEndPlan = {
+                            PolicyRepository(context).clearPlan()
+                            PolicyRepository(context).clearTemporaryPass()
+                            AppState.resetGrant()
+                            PolicyEventStore(context).record("plan_ended_early")
+                            BlockOverlay.hideImmediately()
+                            showTopToast(context, "计划已结束")
+                        }
                     )
                 }
             }

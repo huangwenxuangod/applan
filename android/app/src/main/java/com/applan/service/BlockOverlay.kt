@@ -18,6 +18,9 @@ import android.widget.TextView
 import com.applan.MainActivity
 import com.applan.util.PolicyRepository
 import com.applan.util.TemporaryPass
+import com.applan.util.PolicyEventStore
+import com.applan.util.EventAnalytics
+import java.util.Calendar
 
 /**
  * AppBlock式全局遮罩拦截器
@@ -237,21 +240,37 @@ object BlockOverlay {
         root.addView(backBtn, btnParams)
 
         if (blockedPackage != null) {
-            val temporaryPassButton = Button(context).apply {
-                text = "临时放行 5 分钟"
-                this.textSize = btnTextSize
-                setTextColor(Color.WHITE)
-                setBackgroundColor(Color.parseColor("#FF444444"))
-                setPadding(pad32, pad16, pad32, pad16)
-                isAllCaps = false
-                setOnClickListener {
-                    PolicyRepository(context).saveTemporaryPass(
-                        TemporaryPass(blockedPackage, System.currentTimeMillis() + 5 * 60_000L)
-                    )
-                    hideImmediately()
+            val store = PolicyEventStore(context)
+            val startOfDay = Calendar.getInstance().apply {
+                set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+            }.timeInMillis
+            val remaining = EventAnalytics.remainingTemporaryPasses(store.getAll(), startOfDay, startOfDay + 86_400_000L)
+            if (remaining > 0) {
+                val temporaryPassButton = Button(context).apply {
+                    text = "临时放行 5 分钟（剩余 $remaining/5）"
+                    this.textSize = btnTextSize
+                    setTextColor(Color.WHITE)
+                    setBackgroundColor(Color.parseColor("#FF444444"))
+                    setPadding(pad32, pad16, pad32, pad16)
+                    isAllCaps = false
+                    setOnClickListener {
+                        PolicyRepository(context).saveTemporaryPass(
+                            TemporaryPass(blockedPackage, System.currentTimeMillis() + 5 * 60_000L)
+                        )
+                        store.record("temporary_pass_granted", blockedPackage, durationMinutes = 5)
+                        hideImmediately()
+                    }
                 }
+                root.addView(temporaryPassButton, btnParams.apply { topMargin = pad16 })
+            } else {
+                root.addView(TextView(context).apply {
+                    text = "今日临时放行已用完"
+                    setTextColor(Color.parseColor("#CCFFFFFF"))
+                    this.textSize = baseTextSize - 3
+                    gravity = Gravity.CENTER
+                    setPadding(0, pad16, 0, 0)
+                })
             }
-            root.addView(temporaryPassButton, btnParams.apply { topMargin = pad16 })
         }
 
         return root

@@ -266,6 +266,7 @@ fun ChatScreen(
     }
 }
 
+
 @Composable
 fun UserBubble(text: String) {
     Row(

@@ -22,9 +22,12 @@ import com.applan.util.AppConfig
 import com.applan.util.AppPackageResolver
 import com.applan.util.EventAnalytics
 import com.applan.util.PolicyEventStore
+import com.applan.util.PolicyRepository
+import com.applan.util.AiPlan
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.Calendar
+import kotlinx.coroutines.delay
 
 /**
  * 守护看板页面
@@ -50,9 +53,24 @@ private data class AppAttempt(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DashboardScreen(
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onEndPlan: () -> Unit
 ) {
     val context = LocalContext.current
+    var activePlan by remember { mutableStateOf(PolicyRepository(context).getPlan()) }
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    var confirmEndPlan by remember { mutableStateOf(false) }
+    LaunchedEffect(activePlan?.expiresAt) {
+        while (activePlan != null) {
+            now = System.currentTimeMillis()
+            if (activePlan!!.expiresAt <= now) {
+                PolicyRepository(context).clearPlan()
+                PolicyEventStore(context).record("plan_expired")
+                activePlan = null
+            }
+            delay(1_000)
+        }
+    }
     val events = remember { PolicyEventStore(context).getAll() }
     LaunchedEffect(events) {
         withContext(Dispatchers.IO) {
@@ -71,7 +89,7 @@ fun DashboardScreen(
             StatCard("🛡", "${summary.blockedCount}", "今日阻断", Color(0xFFFF6B6B)),
             StatCard("⏱", "${summary.focusMinutes}m", "Plan 专注", Color(0xFF4ECDC4)),
             StatCard("📱", "${summary.topApps.size}", "诱惑应用", Color(0xFFFFA726)),
-            StatCard("✅", "${events.count { it.type == "plan_granted" }}", "已获 Plan", Color(0xFF66BB6A))
+            StatCard("✅", "${summary.planStartedCount}", "今日计划", Color(0xFF66BB6A))
         )
     }
 
@@ -120,6 +138,13 @@ fun DashboardScreen(
                 .padding(horizontal = 16.dp, vertical = 4.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            activePlan?.let { plan ->
+                DashboardPlanPanel(plan, now, context, onEnd = { confirmEndPlan = true })
+            } ?: Text(
+                "当前没有计划，回到对话开始一个计划",
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
             // === 核心数据卡片组 ===
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -234,6 +259,33 @@ fun DashboardScreen(
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth()
             )
+        }
+    }
+    if (confirmEndPlan) {
+        AlertDialog(
+            onDismissRequest = { confirmEndPlan = false },
+            title = { Text("结束当前计划？") },
+            text = { Text("结束后将恢复普通状态。") },
+            confirmButton = { TextButton(onClick = { onEndPlan(); activePlan = null; confirmEndPlan = false }) { Text("结束") } },
+            dismissButton = { TextButton(onClick = { confirmEndPlan = false }) { Text("取消") } }
+        )
+    }
+}
+
+@Composable
+private fun DashboardPlanPanel(plan: AiPlan, now: Long, context: android.content.Context, onEnd: () -> Unit) {
+    val seconds = ((plan.expiresAt - now).coerceAtLeast(0) / 1_000)
+    val names = plan.allowedPackages.take(4).joinToString("、") { AppPackageResolver.getAppName(context, it) }
+    Surface(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)) {
+        Column(modifier = Modifier.fillMaxWidth().padding(14.dp)) {
+            Text("当前计划", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(plan.purpose, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+            Spacer(modifier = Modifier.height(4.dp))
+            Text("剩余 %02d:%02d".format(seconds / 60, seconds % 60), color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
+            Spacer(modifier = Modifier.height(6.dp))
+            Text("允许：$names", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            TextButton(onClick = onEnd, contentPadding = PaddingValues(0.dp)) { Text("结束计划") }
         }
     }
 }
