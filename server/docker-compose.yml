@@ -21,6 +21,7 @@ services:
       # 挂成只读，改完 SOUL.md / proxy_backend.py 重启容器即生效，无需重建镜像
       - ./SOUL.md:/app/SOUL.md:ro
       - ./proxy_backend.py:/app/proxy_backend.py:ro
+      - ./dashboard.py:/app/dashboard.py:ro
       # applan.md 必须可写：后端会把用户反复用的借口自动记录/计数到这里
       - ./applan.md:/app/applan.md
       - ./data:/app/data

@@ -16,10 +16,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.applan.ui.showTopToast
 import com.applan.ui.common.swipeToBack
 import com.applan.network.ApplanClient
 import com.applan.util.AppConfig
 import com.applan.util.AppPackageResolver
+import com.applan.util.AuditNoticeGate
 import com.applan.util.EventAnalytics
 import com.applan.util.PolicyEventStore
 import com.applan.util.PolicyRepository
@@ -72,18 +74,32 @@ fun DashboardScreen(
         }
     }
     val events = remember { PolicyEventStore(context).getAll() }
-    LaunchedEffect(events) {
-        withContext(Dispatchers.IO) {
-            ApplanClient(context).apply { updateConfig(AppConfig.getServerUrl(), AppConfig.getApiKey()) }.syncEvents(events)
-        }
-    }
-    val calendar = remember { Calendar.getInstance() }
     val startOfDay = remember {
-        (calendar.clone() as Calendar).apply {
+        Calendar.getInstance().apply {
             set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
         }.timeInMillis
     }
-    val summary = remember(events, startOfDay) { EventAnalytics.summarize(events, startOfDay, startOfDay + 86_400_000) }
+    val endOfDay = remember(startOfDay) {
+        Calendar.getInstance().apply {
+            timeInMillis = startOfDay
+            add(Calendar.DATE, 1)
+        }.timeInMillis
+    }
+    val auditNoticeGate = remember { AuditNoticeGate(context.applicationContext) }
+    LaunchedEffect(events, startOfDay, endOfDay) {
+        val verification = withContext(Dispatchers.IO) {
+            ApplanClient(context).apply { updateConfig(AppConfig.getServerUrl(), AppConfig.getApiKey()) }
+                .verifyDashboardAudit(events, startOfDay, endOfDay)
+        }
+        DashboardAuditNotice.forVerification(verification)?.let { notification ->
+            if (auditNoticeGate.shouldNotify(notification.key)) {
+                showTopToast(context, notification.message)
+            }
+        }
+    }
+    val summary = remember(events, startOfDay, endOfDay) {
+        EventAnalytics.summarize(events, startOfDay, endOfDay)
+    }
     val statCards = remember(summary) {
         listOf(
             StatCard("🛡", "${summary.blockedCount}", "今日阻断", Color(0xFFFF6B6B)),
@@ -92,14 +108,12 @@ fun DashboardScreen(
             StatCard("✅", "${summary.planStartedCount}", "今日计划", Color(0xFF66BB6A))
         )
     }
-
     val colors = listOf(Color(0xFFFF6B6B), Color(0xFF4CAF50), Color(0xFFFF5722), Color(0xFF2196F3), Color(0xFFFF9800))
     val topApps = remember(summary) {
         summary.topApps.take(5).mapIndexed { index, app ->
             AppAttempt(AppPackageResolver.getAppName(context, app.packageName), "📱", app.count, colors[index])
         }
     }
-
     val weekData = remember(events, startOfDay) {
         List(7) { index ->
             val dayStart = startOfDay - (6 - index) * 86_400_000L
@@ -250,15 +264,6 @@ fun DashboardScreen(
                     }
                 }
             }
-
-            // 底部提示
-            Text(
-                "数据将在使用过程中逐步积累",
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
-                textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth()
-            )
         }
     }
     if (confirmEndPlan) {

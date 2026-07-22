@@ -109,3 +109,43 @@
 - [x] Record plan start, early end, and expiry locally for later batch sync.
 - [x] Show today's plan-start count in Dashboard.
 - [x] Verify with `gradle :app:testDebugUnitTest` and `gradle :app:assembleDebug`.
+
+### Task 7: Server dashboard aggregation (P3.1)
+
+**Files:**
+- Create: `server/dashboard.py`
+- Create: `server/test_dashboard.py`
+- Create: `server/test_dashboard_api.py`
+- Modify: `server/proxy_backend.py`
+- Modify: `server/Dockerfile`
+- Modify: `server/docker-compose.yml`
+
+**Decision:** The server remains an audit and aggregation layer. It reads only deduplicated `synced_events`; Android remains the source of truth for enforcement and renders local data without waiting for a response.
+
+**Interfaces:**
+- `GET /v1/dashboard/today`: authenticated summary for the current UTC day.
+- `GET /v1/dashboard/range?from=<epoch-ms>&to=<epoch-ms>`: authenticated summary for a caller-defined range up to 90 days. Android should use this endpoint when it needs the device-local calendar day.
+- Both return event counts, remaining temporary-pass quota, plan lifecycle counts, and ranked blocked packages.
+
+- [x] Add pure aggregation tests, including invalid stored JSON and quota clamping.
+- [x] Add endpoint tests covering event ingestion, bearer authentication, invalid date range, and current-day output.
+- [x] Add range validation and read only the existing deduplicated event store.
+- [x] Keep image and Compose bindings coherent for the new aggregation module; correct the Dockerfile comment syntax so Docker can parse it.
+- [x] Verify with `python -m unittest test_dashboard.py test_dashboard_api.py` in an isolated FastAPI/httpx environment and `python -m py_compile dashboard.py proxy_backend.py`.
+
+### Task 8: Silent dashboard audit reconciliation (P3.2)
+
+**Files:**
+- Create: `android/app/src/main/java/com/applan/util/DashboardAudit.kt`
+- Create: `android/app/src/main/java/com/applan/util/AuditNoticeGate.kt`
+- Create: `android/app/src/main/java/com/applan/ui/dashboard/DashboardAuditNotice.kt`
+- Modify: `android/app/src/main/java/com/applan/network/ApplanClient.kt`
+- Modify: `android/app/src/main/java/com/applan/ui/dashboard/DashboardScreen.kt`
+
+**Decision:** Dashboard remains local-first and must not render sync badges, timestamps, loading text, success toasts, or offline copy. After batch upload it silently compares the server range summary with the same local calendar-day data. Only actionable `401/403`, server/parse failure, or mismatched records may show a top toast, once per category every six hours. Offline is silent.
+
+- [x] Add tests for local/remote summary alignment, throttling, client request order, authentication, malformed server data, and mismatched summaries.
+- [x] Return typed audit outcomes from `ApplanClient` without allowing server data to overwrite local Dashboard data.
+- [x] Use a device-local start/end range rather than server UTC today for reconciliation.
+- [x] Wire only actionable outcomes to the existing top toast; leave successful and offline checks visually silent.
+- [x] Verify with `gradle :app:testDebugUnitTest :app:assembleDebug`.

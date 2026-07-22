@@ -37,6 +37,7 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 import httpx
 import uvicorn
+from dashboard import summarize_events, utc_today_range, validate_range
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("applan-proxy")
@@ -303,6 +304,36 @@ async def post_event_batch(request: Request):
             )
             accepted += cursor.rowcount
     return {"accepted": accepted}
+
+
+def load_dashboard(start: int, end: int) -> dict:
+    validate_range(start, end)
+    with sqlite3.connect(STATE_DB) as db:
+        rows = db.execute(
+            "SELECT body, occurred_at FROM synced_events WHERE occurred_at >= ? AND occurred_at < ?",
+            (start, end),
+        ).fetchall()
+    return summarize_events(rows, start, end)
+
+
+@app.get("/v1/dashboard/today")
+async def get_dashboard_today(request: Request):
+    require_device_token(request)
+    start, end = utc_today_range()
+    return load_dashboard(start, end)
+
+
+@app.get("/v1/dashboard/range")
+async def get_dashboard_range(request: Request):
+    require_device_token(request)
+    try:
+        start = int(request.query_params["from"])
+        end = int(request.query_params["to"])
+        return load_dashboard(start, end)
+    except KeyError:
+        raise HTTPException(status_code=400, detail="from and to are required")
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
 
 
 @app.post("/v1/chat/completions")

@@ -5,7 +5,10 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.util.Log
 import com.applan.BuildConfig
+import com.applan.util.DashboardAudit
+import com.applan.util.DashboardAuditSnapshot
 import com.applan.util.PolicyEvent
+import com.applan.util.RankedApp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -27,6 +30,21 @@ import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+
+sealed class DashboardAuditVerification {
+    object Aligned : DashboardAuditVerification()
+    object Offline : DashboardAuditVerification()
+    object Unauthorized : DashboardAuditVerification()
+    object Failed : DashboardAuditVerification()
+    object Mismatch : DashboardAuditVerification()
+}
+
+private sealed class AuditHttpResult<out T> {
+    data class Success<T>(val value: T) : AuditHttpResult<T>()
+    object Offline : AuditHttpResult<Nothing>()
+    object Unauthorized : AuditHttpResult<Nothing>()
+    object Failed : AuditHttpResult<Nothing>()
+}
 
 class ApplanClient(private var context: Context? = null) {
 
@@ -69,6 +87,35 @@ class ApplanClient(private var context: Context? = null) {
 
     fun syncEvents(events: List<PolicyEvent>): Boolean {
         if (!isConfigured() || apiKey.isBlank() || events.isEmpty()) return false
+        return postEvents(events) is AuditHttpResult.Success
+    }
+
+    fun verifyDashboardAudit(
+        events: List<PolicyEvent>,
+        from: Long,
+        to: Long
+    ): DashboardAuditVerification {
+        if (events.isNotEmpty()) {
+            when (postEvents(events)) {
+                AuditHttpResult.Offline -> return DashboardAuditVerification.Offline
+                AuditHttpResult.Unauthorized -> return DashboardAuditVerification.Unauthorized
+                AuditHttpResult.Failed -> return DashboardAuditVerification.Failed
+                is AuditHttpResult.Success -> Unit
+            }
+        }
+        return when (val remote = fetchDashboardAudit(from, to)) {
+            AuditHttpResult.Offline -> DashboardAuditVerification.Offline
+            AuditHttpResult.Unauthorized -> DashboardAuditVerification.Unauthorized
+            AuditHttpResult.Failed -> DashboardAuditVerification.Failed
+            is AuditHttpResult.Success -> if (DashboardAudit.isAligned(events, from, to, remote.value)) {
+                DashboardAuditVerification.Aligned
+            } else {
+                DashboardAuditVerification.Mismatch
+            }
+        }
+    }
+
+    private fun postEvents(events: List<PolicyEvent>): AuditHttpResult<Unit> {
         val payload = JSONArray().apply {
             events.forEach { event ->
                 put(JSONObject().apply {
@@ -80,18 +127,56 @@ class ApplanClient(private var context: Context? = null) {
                 })
             }
         }
-        val request = Request.Builder()
+        return executeAuditRequest(
+            Request.Builder()
             .url("$serverUrl/v1/events/batch")
             .post(payload.toString().toRequestBody("application/json".toMediaType()))
             .header("Authorization", "Bearer $apiKey")
             .build()
-        return try {
-            client.newCall(request).execute().use { it.isSuccessful }
-        } catch (e: IOException) {
-            Log.d(TAG, "Event sync deferred: ${e.message}")
-            false
-        }
+        ) { Unit }
     }
+
+    private fun fetchDashboardAudit(from: Long, to: Long): AuditHttpResult<DashboardAuditSnapshot> {
+        if (!isConfigured() || apiKey.isBlank()) return AuditHttpResult.Unauthorized
+        return executeAuditRequest(
+            Request.Builder()
+                .url("$serverUrl/v1/dashboard/range?from=$from&to=$to")
+                .header("Authorization", "Bearer $apiKey")
+                .build()
+        ) { body -> parseDashboardAuditSnapshot(body) }
+    }
+
+    private fun <T : Any> executeAuditRequest(request: Request, parse: (String) -> T?): AuditHttpResult<T> = try {
+        client.newCall(request).execute().use { response ->
+            when {
+                response.isSuccessful -> parse(response.body?.string().orEmpty())
+                    ?.let { AuditHttpResult.Success(it) }
+                    ?: AuditHttpResult.Failed
+                response.code == 401 || response.code == 403 -> AuditHttpResult.Unauthorized
+                else -> AuditHttpResult.Failed
+            }
+        }
+    } catch (e: IOException) {
+        Log.d(TAG, "Dashboard audit deferred: ${e.message}")
+        AuditHttpResult.Offline
+    }
+
+    private fun parseDashboardAuditSnapshot(body: String): DashboardAuditSnapshot? = runCatching {
+        val json = JSONObject(body)
+        val topApps = json.getJSONArray("topApps")
+        DashboardAuditSnapshot(
+            blockedCount = json.getInt("blockedCount"),
+            temporaryPassCount = json.getInt("temporaryPassCount"),
+            planStartedCount = json.getInt("planStartedCount"),
+            planEndedEarlyCount = json.getInt("planEndedEarlyCount"),
+            planExpiredCount = json.getInt("planExpiredCount"),
+            topApps = List(topApps.length()) { index ->
+                topApps.getJSONObject(index).let { app ->
+                    RankedApp(app.getString("packageName"), app.getInt("count"))
+                }
+            }
+        )
+    }.getOrNull()
 
     /**
      * 检查网络是否可用 - 这个方法在调用时要确保在IO线程
