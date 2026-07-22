@@ -6,6 +6,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Calendar
 
+data class BackupPolicy(val version: Int, val profiles: List<TimeProfile>, val planModeEnabled: Boolean)
+
 class PolicyRepository(context: Context) {
     private val preferences = (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
         context.createDeviceProtectedStorageContext()
@@ -46,7 +48,33 @@ class PolicyRepository(context: Context) {
                 }
             )
         }
-        preferences.edit().putString(KEY_PROFILES, array.toString()).apply()
+        preferences.edit().putString(KEY_PROFILES, array.toString()).putBoolean(KEY_POLICY_DIRTY, true).apply()
+    }
+
+    fun backupPolicy(): BackupPolicy = BackupPolicy(
+        preferences.getInt(KEY_POLICY_VERSION, 0), getProfiles(),
+        preferences.getBoolean(KEY_PLAN_MODE, false)
+    )
+
+    fun isPolicyDirty(): Boolean = preferences.getBoolean(KEY_POLICY_DIRTY, getProfiles().isNotEmpty())
+
+    fun markPolicyDirty() { preferences.edit().putBoolean(KEY_POLICY_DIRTY, true).apply() }
+
+    fun applyRemotePolicy(policy: BackupPolicy) {
+        val profiles = JSONArray()
+        policy.profiles.forEach { profile -> profiles.put(JSONObject().apply {
+            put("id", profile.id); put("weekdays", JSONArray(profile.weekdays.toList()))
+            put("startMinute", profile.startMinute); put("endMinute", profile.endMinute)
+            put("allowedPackages", JSONArray(profile.allowedPackages.toList()))
+        }) }
+        preferences.edit().putString(KEY_PROFILES, profiles.toString())
+            .putBoolean(KEY_PLAN_MODE, policy.planModeEnabled)
+            .putInt(KEY_POLICY_VERSION, policy.version)
+            .putBoolean(KEY_POLICY_DIRTY, false).apply()
+    }
+
+    fun markPolicySynced(version: Int) {
+        preferences.edit().putInt(KEY_POLICY_VERSION, version).putBoolean(KEY_POLICY_DIRTY, false).apply()
     }
 
     fun getPlan(): AiPlan? {
@@ -126,5 +154,8 @@ class PolicyRepository(context: Context) {
         const val KEY_PROFILES = "time_profiles"
         const val KEY_PLAN = "ai_plan"
         const val KEY_TEMPORARY_PASS = "temporary_pass"
+        const val KEY_POLICY_VERSION = "policy_version"
+        const val KEY_POLICY_DIRTY = "policy_dirty"
+        const val KEY_PLAN_MODE = "plan_mode_enabled"
     }
 }

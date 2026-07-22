@@ -84,6 +84,29 @@ class DashboardEndpointTest(unittest.IsolatedAsyncioTestCase):
         self.assertLessEqual(dashboard.json()["from"], now)
         self.assertGreater(dashboard.json()["to"], now)
 
+    async def test_policy_uses_compare_and_swap_versions(self):
+        first = await self.client.put(
+            "/v1/policy",
+            headers=self.headers,
+            json={"baseVersion": 0, "profiles": [], "planModeEnabled": True},
+        )
+        stale = await self.client.put(
+            "/v1/policy",
+            headers=self.headers,
+            json={"baseVersion": 0, "profiles": [], "planModeEnabled": False},
+        )
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(first.json()["version"], 1)
+        self.assertTrue(first.json()["planModeEnabled"])
+        self.assertEqual(stale.status_code, 409)
+        self.assertEqual(stale.json()["version"], 1)
+
+    async def test_policy_requires_device_token(self):
+        response = await self.client.get("/v1/policy")
+
+        self.assertEqual(response.status_code, 401)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -8,6 +8,9 @@ import com.applan.BuildConfig
 import com.applan.util.DashboardAudit
 import com.applan.util.DashboardAuditSnapshot
 import com.applan.util.PolicyEvent
+import com.applan.util.PolicyRepository
+import com.applan.util.BackupPolicy
+import com.applan.util.TimeProfile
 import com.applan.util.RankedApp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
@@ -88,6 +91,56 @@ class ApplanClient(private var context: Context? = null) {
     fun syncEvents(events: List<PolicyEvent>): Boolean {
         if (!isConfigured() || apiKey.isBlank() || events.isEmpty()) return false
         return postEvents(events) is AuditHttpResult.Success
+    }
+
+    fun syncPolicy(repository: PolicyRepository) {
+        if (!isConfigured() || apiKey.isBlank()) return
+        val remote = fetchPolicy() ?: return
+        val local = repository.backupPolicy()
+        if (repository.isPolicyDirty()) {
+            val uploaded = putPolicy(remote.version, local) ?: return
+            repository.markPolicySynced(uploaded.version)
+        } else if (remote.version > local.version) {
+            repository.applyRemotePolicy(remote)
+        }
+    }
+
+    private fun fetchPolicy(): BackupPolicy? = try {
+        val request = Request.Builder().url("$serverUrl/v1/policy")
+            .header("Authorization", "Bearer $apiKey").build()
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) null else parsePolicy(response.body?.string().orEmpty())
+        }
+    } catch (_: IOException) { null }
+
+    private fun putPolicy(baseVersion: Int, policy: BackupPolicy): BackupPolicy? = try {
+        val profiles = JSONArray().apply { policy.profiles.forEach { profile -> put(profile.toJson()) } }
+        val body = JSONObject().apply {
+            put("baseVersion", baseVersion); put("profiles", profiles); put("planModeEnabled", policy.planModeEnabled)
+        }
+        val request = Request.Builder().url("$serverUrl/v1/policy")
+            .put(body.toString().toRequestBody("application/json".toMediaType()))
+            .header("Authorization", "Bearer $apiKey").build()
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) null else parsePolicy(response.body?.string().orEmpty())
+        }
+    } catch (_: IOException) { null }
+
+    private fun parsePolicy(body: String): BackupPolicy? = runCatching {
+        val value = JSONObject(body)
+        val profiles = value.getJSONArray("profiles")
+        BackupPolicy(value.getInt("version"), List(profiles.length()) { index ->
+            profiles.getJSONObject(index).let { item -> TimeProfile(
+                item.getString("id"), item.getJSONArray("weekdays").let { days -> buildSet { for (i in 0 until days.length()) add(days.getInt(i)) } },
+                item.getInt("startMinute"), item.getInt("endMinute"),
+                item.getJSONArray("allowedPackages").let { apps -> buildSet { for (i in 0 until apps.length()) add(apps.getString(i)) } }
+            ) }
+        }, value.getBoolean("planModeEnabled"))
+    }.getOrNull()
+
+    private fun TimeProfile.toJson() = JSONObject().apply {
+        put("id", id); put("weekdays", JSONArray(weekdays.toList())); put("startMinute", startMinute)
+        put("endMinute", endMinute); put("allowedPackages", JSONArray(allowedPackages.toList()))
     }
 
     fun verifyDashboardAudit(

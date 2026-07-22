@@ -54,4 +54,20 @@ class PolicyRepositoryTest {
 
         assertEquals(null, repository.getTemporaryPass())
     }
+
+    @Test
+    fun `remote backup replaces only long lived policy and marks it synced`() {
+        repository.saveProfiles(listOf(TimeProfile("local", setOf(1), 540, 600, emptySet())))
+        repository.savePlan(AiPlan(setOf("com.tencent.mm"), "reply", System.currentTimeMillis() + 60_000))
+
+        repository.applyRemotePolicy(
+            BackupPolicy(4, listOf(TimeProfile("remote", setOf(2), 600, 660, setOf("com.tencent.wework"))), true)
+        )
+
+        assertEquals(4, repository.backupPolicy().version)
+        assertEquals("remote", repository.getProfiles().single().id)
+        assertEquals(true, repository.backupPolicy().planModeEnabled)
+        assertEquals(false, repository.isPolicyDirty())
+        assertNotNull(repository.getPlan())
+    }
 }

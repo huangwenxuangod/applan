@@ -33,8 +33,9 @@ import logging
 import pathlib
 import sqlite3
 from datetime import datetime, timezone
+from typing import Optional
 from fastapi import FastAPI, HTTPException, Request, Response
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 import httpx
 import uvicorn
 from dashboard import summarize_events, utc_today_range, validate_range
@@ -250,24 +251,53 @@ async def get_policy(request: Request):
     require_device_token(request)
     with sqlite3.connect(STATE_DB) as db:
         row = db.execute("SELECT body FROM policy WHERE id=1").fetchone()
-    return json.loads(row[0]) if row else {"version": 0, "profiles": [], "strict": False}
+    return _policy_document(row[0] if row else None)
 
 
 @app.put("/v1/policy")
 async def put_policy(request: Request):
     require_device_token(request)
     body = await request.json()
-    if not isinstance(body, dict) or not isinstance(body.get("version"), int) or body["version"] < 0:
-        raise HTTPException(status_code=400, detail="policy requires a non-negative integer version")
-    encoded = json.dumps(body, ensure_ascii=False, separators=(",", ":"))
+    if (
+        not isinstance(body, dict)
+        or not isinstance(body.get("baseVersion"), int)
+        or body["baseVersion"] < 0
+        or not isinstance(body.get("profiles"), list)
+        or not isinstance(body.get("planModeEnabled"), bool)
+    ):
+        raise HTTPException(status_code=400, detail="policy requires baseVersion, profiles, and planModeEnabled")
     async with _state_lock:
         with sqlite3.connect(STATE_DB) as db:
+            row = db.execute("SELECT body FROM policy WHERE id=1").fetchone()
+            current = _policy_document(row[0] if row else None)
+            if body["baseVersion"] != current["version"]:
+                return JSONResponse(status_code=409, content=current)
+            stored = {
+                "version": current["version"] + 1,
+                "profiles": body["profiles"],
+                "planModeEnabled": body["planModeEnabled"],
+            }
+            encoded = json.dumps(stored, ensure_ascii=False, separators=(",", ":"))
             db.execute(
                 "INSERT INTO policy(id, version, body, updated_at) VALUES(1, ?, ?, ?) "
                 "ON CONFLICT(id) DO UPDATE SET version=excluded.version, body=excluded.body, updated_at=excluded.updated_at",
-                (body["version"], encoded, datetime.now(timezone.utc).isoformat()),
+                (stored["version"], encoded, datetime.now(timezone.utc).isoformat()),
             )
-    return body
+    return stored
+
+
+def _policy_document(encoded: Optional[str]) -> dict:
+    if not encoded:
+        return {"version": 0, "profiles": [], "planModeEnabled": False}
+    try:
+        body = json.loads(encoded)
+    except (TypeError, json.JSONDecodeError):
+        return {"version": 0, "profiles": [], "planModeEnabled": False}
+    return {
+        "version": body.get("version", 0) if isinstance(body.get("version", 0), int) else 0,
+        "profiles": body.get("profiles", []) if isinstance(body.get("profiles", []), list) else [],
+        "planModeEnabled": body.get("planModeEnabled", False) if isinstance(body.get("planModeEnabled", False), bool) else False,
+    }
 
 
 @app.post("/v1/events", status_code=202)

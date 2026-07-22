@@ -33,6 +33,7 @@ import com.applan.util.AutoStartHelper
 import com.applan.util.EmergencyKeyGenerator
 import com.applan.util.PermissionHelper
 import com.applan.util.PolicyRepository
+import com.applan.network.ApplanClient
 import com.applan.util.TimeProfile
 import com.applan.ui.common.swipeToBack
 import kotlinx.coroutines.launch
@@ -111,6 +112,9 @@ fun SettingsScreen(
         repository.saveProfiles(profiles)
         ScheduleBoundaryReceiver.scheduleNext(context)
         timeProfiles = profiles
+        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            ApplanClient(context).apply { updateConfig(AppConfig.getServerUrl(), AppConfig.getApiKey()) }.syncPolicy(repository)
+        }
     }
 
     fun pickTime(currentMinute: Int, onSelected: (Int) -> Unit) {
@@ -412,7 +416,12 @@ fun SettingsScreen(
                             checked = planModeEnabled,
                             onCheckedChange = { enabled ->
                                 AppConfig.setPlanModeEnabled(enabled)
+                                val repository = PolicyRepository(context)
+                                repository.markPolicyDirty()
                                 planModeEnabled = enabled
+                                scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                                    ApplanClient(context).apply { updateConfig(AppConfig.getServerUrl(), AppConfig.getApiKey()) }.syncPolicy(repository)
+                                }
                             }
                         )
                     }

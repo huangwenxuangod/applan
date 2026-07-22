@@ -7,6 +7,13 @@ import android.content.Context
 import android.os.Build
 import com.applan.util.AppConfig
 import com.applan.util.CrashHandler
+import com.applan.util.PolicyRepository
+import com.applan.network.ApplanClient
+import com.applan.service.ScheduleBoundaryReceiver
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 class ApplanApp : Application() {
 
@@ -38,6 +45,12 @@ class ApplanApp : Application() {
 
         // 初始化全局崩溃处理器（必须最先初始化）
         CrashHandler.init(this)
+
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            ApplanClient(this@ApplanApp).apply { updateConfig(AppConfig.getServerUrl(), AppConfig.getApiKey()) }
+                .syncPolicy(PolicyRepository(this@ApplanApp))
+            ScheduleBoundaryReceiver.scheduleNext(this@ApplanApp)
+        }
 
         createNotificationChannels()
     }
