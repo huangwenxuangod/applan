@@ -12,7 +12,7 @@ class EventAnalyticsTest {
                 PolicyEvent("1", "app_blocked", day, "com.ss.android.ugc.aweme"),
                 PolicyEvent("2", "app_blocked", day + 1, "com.ss.android.ugc.aweme"),
                 PolicyEvent("3", "app_blocked", day + 2, "com.xingin.xhs"),
-                PolicyEvent("4", "plan_granted", day + 3, null, durationMinutes = 25)
+                PolicyEvent("4", "plan_app_usage", day + 3, "com.tencent.wework", durationSeconds = 1_500)
             ),
             startOfDay = day - 100,
             endOfDay = day + 86_400_000

@@ -5,7 +5,9 @@ data class PolicyEvent(
     val type: String,
     val occurredAt: Long,
     val packageName: String?,
-    val durationMinutes: Int = 0
+    val durationMinutes: Int = 0,
+    val durationSeconds: Int = 0,
+    val planId: String? = null
 )
 
 data class RankedApp(val packageName: String, val count: Int)
@@ -33,7 +35,7 @@ object EventAnalytics {
         val blocked = today.filter { it.type == "app_blocked" }
         return DashboardSummary(
             blockedCount = blocked.size,
-            focusMinutes = today.filter { it.type == "plan_granted" }.sumOf { it.durationMinutes },
+            focusMinutes = today.filter { it.type == "plan_app_usage" }.sumOf { it.durationSeconds } / 60,
             topApps = blocked.mapNotNull { it.packageName }
                 .groupingBy { it }
                 .eachCount()

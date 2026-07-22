@@ -4,6 +4,8 @@ import android.accessibilityservice.AccessibilityService
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.BroadcastReceiver
+import android.content.IntentFilter
 import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
@@ -18,6 +20,7 @@ import com.applan.util.AppState
 import com.applan.util.BlockingCoordinator
 import com.applan.util.PolicyRepository
 import com.applan.util.PolicyEventStore
+import com.applan.util.PlanSessionTracker
 import com.applan.util.ViolationRecord
 
 class LockAccessibilityService : AccessibilityService() {
@@ -41,6 +44,12 @@ class LockAccessibilityService : AccessibilityService() {
     private var workerThread: HandlerThread? = null
     private var workerHandler: Handler? = null
     private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
+    private val planSessionTracker = PlanSessionTracker()
+    private val screenOffReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action == Intent.ACTION_SCREEN_OFF) flushPlanUsage()
+        }
+    }
 
     @Volatile
     private var cachedDefaultLauncher: String? = null
@@ -241,10 +250,17 @@ class LockAccessibilityService : AccessibilityService() {
         }
 
         cacheDefaultLauncher()
+        registerReceiver(screenOffReceiver, IntentFilter(Intent.ACTION_SCREEN_OFF))
 
         mainHandler.postDelayed({
             checkForegroundAppOnConnect()
         }, 500)
+    }
+
+    private fun flushPlanUsage() {
+        planSessionTracker.stop().forEach { usage ->
+            PolicyEventStore(this).record("plan_app_usage", usage.packageName, durationSeconds = usage.durationSeconds, planId = usage.planId)
+        }
     }
 
     private fun checkForegroundAppOnConnect() {
@@ -327,6 +343,10 @@ class LockAccessibilityService : AccessibilityService() {
         try {
             val repository = PolicyRepository(this)
             val policy = repository.evaluate()
+            val plan = repository.getPlan()?.takeIf { it.expiresAt > System.currentTimeMillis() }
+            planSessionTracker.onForeground(pkg, plan?.id, plan?.allowedPackages.orEmpty()).forEach { usage ->
+                PolicyEventStore(this).record("plan_app_usage", usage.packageName, durationSeconds = usage.durationSeconds, planId = usage.planId)
+            }
             val temporaryPass = repository.getTemporaryPass()
             when (BlockingCoordinator.evaluate(
                 pkg, policy, AppConfig.isExitGranted(), AppConfig.isPlanModeEnabled(), temporaryPass
@@ -435,10 +455,13 @@ class LockAccessibilityService : AccessibilityService() {
     }
 
     override fun onInterrupt() {
+        flushPlanUsage()
         Log.d(TAG, "Accessibility interrupted")
     }
 
     override fun onDestroy() {
+        flushPlanUsage()
+        runCatching { unregisterReceiver(screenOffReceiver) }
         super.onDestroy()
         instance = null
         workerThread?.quitSafely()

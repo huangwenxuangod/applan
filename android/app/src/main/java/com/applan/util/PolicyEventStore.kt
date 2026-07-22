@@ -8,9 +8,9 @@ import java.util.UUID
 class PolicyEventStore(context: Context) {
     private val preferences = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
 
-    fun record(type: String, packageName: String? = null, durationMinutes: Int = 0) {
+    fun record(type: String, packageName: String? = null, durationMinutes: Int = 0, durationSeconds: Int = 0, planId: String? = null) {
         val events = getAll().takeLast(MAX_EVENTS - 1).toMutableList()
-        events.add(PolicyEvent(UUID.randomUUID().toString(), type, System.currentTimeMillis(), packageName, durationMinutes))
+        events.add(PolicyEvent(UUID.randomUUID().toString(), type, System.currentTimeMillis(), packageName, durationMinutes, durationSeconds, planId))
         val encoded = JSONArray()
         events.forEach { event ->
             encoded.put(JSONObject().apply {
@@ -19,6 +19,7 @@ class PolicyEventStore(context: Context) {
                 put("occurredAt", event.occurredAt)
                 put("packageName", event.packageName)
                 put("durationMinutes", event.durationMinutes)
+                put("durationSeconds", event.durationSeconds); put("planId", event.planId)
             })
         }
         preferences.edit().putString(KEY_EVENTS, encoded.toString()).apply()
@@ -29,7 +30,7 @@ class PolicyEventStore(context: Context) {
         buildList {
             for (index in 0 until array.length()) {
                 val item = array.getJSONObject(index)
-                add(PolicyEvent(item.getString("id"), item.getString("type"), item.getLong("occurredAt"), item.optString("packageName").ifBlank { null }, item.optInt("durationMinutes")))
+                add(PolicyEvent(item.getString("id"), item.getString("type"), item.getLong("occurredAt"), item.optString("packageName").ifBlank { null }, item.optInt("durationMinutes"), item.optInt("durationSeconds"), item.optString("planId").ifBlank { null }))
             }
         }
     } catch (_: Exception) {

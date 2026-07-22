@@ -14,6 +14,7 @@ class DashboardSummaryTest(unittest.TestCase):
                 ("{\"type\":\"plan_started\"}", 1_300),
                 ("{\"type\":\"plan_ended_early\"}", 1_400),
                 ("{\"type\":\"plan_expired\"}", 1_500),
+                ("{\"type\":\"plan_app_usage\",\"durationSeconds\":125}", 1_600),
                 ("{\"type\":\"app_blocked\",\"packageName\":\"outside\"}", 2_000),
             ],
             1_000,
@@ -31,6 +32,7 @@ class DashboardSummaryTest(unittest.TestCase):
                 "planStartedCount": 1,
                 "planEndedEarlyCount": 1,
                 "planExpiredCount": 1,
+                "focusMinutes": 2,
                 "topApps": [{"packageName": "com.tencent.mm", "count": 2}],
             },
         )

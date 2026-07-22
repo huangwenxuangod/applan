@@ -177,6 +177,8 @@ class ApplanClient(private var context: Context? = null) {
                     put("occurredAt", event.occurredAt)
                     put("packageName", event.packageName)
                     put("durationMinutes", event.durationMinutes)
+                    put("durationSeconds", event.durationSeconds)
+                    put("planId", event.planId)
                 })
             }
         }

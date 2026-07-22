@@ -31,6 +31,7 @@ def summarize_events(rows: Iterable[Tuple[str, int]], start: int, end: int) -> d
     plan_started_count = 0
     plan_ended_early_count = 0
     plan_expired_count = 0
+    focus_seconds = 0
     app_counts: Counter[str] = Counter()
 
     for body, occurred_at in rows:
@@ -56,6 +57,10 @@ def summarize_events(rows: Iterable[Tuple[str, int]], start: int, end: int) -> d
             plan_ended_early_count += 1
         elif event_type == "plan_expired":
             plan_expired_count += 1
+        elif event_type == "plan_app_usage":
+            seconds = event.get("durationSeconds")
+            if isinstance(seconds, int) and seconds > 0:
+                focus_seconds += seconds
 
     return {
         "from": start,
@@ -66,6 +71,7 @@ def summarize_events(rows: Iterable[Tuple[str, int]], start: int, end: int) -> d
         "planStartedCount": plan_started_count,
         "planEndedEarlyCount": plan_ended_early_count,
         "planExpiredCount": plan_expired_count,
+        "focusMinutes": focus_seconds // 60,
         "topApps": [
             {"packageName": package_name, "count": count}
             for package_name, count in sorted(app_counts.items(), key=lambda item: (-item[1], item[0]))

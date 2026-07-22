@@ -55,6 +55,7 @@ class DashboardEndpointTest(unittest.IsolatedAsyncioTestCase):
                 "planStartedCount": 1,
                 "planEndedEarlyCount": 0,
                 "planExpiredCount": 0,
+                "focusMinutes": 0,
                 "topApps": [{"packageName": "com.tencent.mm", "count": 1}],
             },
         )
