@@ -48,7 +48,7 @@ yarn-error.log*
 
 # ===== 本地工具记忆（WorkBuddy 运行态，不进版本库）=====
 .workbuddy/
-
+.waza
 # ===== Python 缓存 =====
 __pycache__/
 *.pyc

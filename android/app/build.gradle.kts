@@ -3,6 +3,13 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+val applanDeviceToken = providers.gradleProperty("applanDeviceToken")
+    .orElse(providers.environmentVariable("APPLAN_DEVICE_TOKEN"))
+    .orNull
+    .orEmpty()
+    .replace("\\", "\\\\")
+    .replace("\"", "\\\"")
+
 android {
     namespace = "com.applan"
     compileSdk = 35
@@ -16,7 +23,7 @@ android {
 
         // === 服务器配置（在这里修改，不需要在APP内设置）===
         buildConfigField("String", "SERVER_URL", "\"http://129.204.200.38:8799\"")
-        buildConfigField("String", "API_KEY", "\"\"")
+        buildConfigField("String", "API_KEY", "\"9sK7pR2gTzQ5vBn8dFxL3jMwY0cAhG6uSeJ1iDfNzXtCbPqVmOrEy2aS4kU7lZ9\"")
     }
 
     signingConfigs {
