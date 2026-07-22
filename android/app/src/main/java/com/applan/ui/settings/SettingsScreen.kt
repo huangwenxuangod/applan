@@ -1,5 +1,6 @@
 package com.applan.ui.settings
 
+import android.app.TimePickerDialog
 import android.content.pm.PackageManager
 import android.os.Build
 import androidx.compose.foundation.clickable
@@ -22,14 +23,18 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.applan.R
+import com.applan.service.ScheduleBoundaryReceiver
 import com.applan.util.AppConfig
 import com.applan.util.AppState
 import com.applan.util.AppUpdateManager
 import com.applan.util.AutoStartHelper
 import com.applan.util.EmergencyKeyGenerator
 import com.applan.util.PermissionHelper
+import com.applan.util.PolicyRepository
+import com.applan.util.TimeProfile
 import com.applan.ui.common.swipeToBack
 import kotlinx.coroutines.launch
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -90,6 +95,29 @@ fun SettingsScreen(
     // 计划模式状态（Plan Mode）
     var planModeEnabled by remember {
         mutableStateOf(AppConfig.isPlanModeEnabled())
+    }
+
+    var dailyProfile by remember {
+        mutableStateOf(PolicyRepository(context).getProfiles().firstOrNull { it.id == DAILY_PROFILE_ID })
+    }
+
+    fun saveDailyProfile(profile: TimeProfile?) {
+        val repository = PolicyRepository(context)
+        val profiles = repository.getProfiles().filterNot { it.id == DAILY_PROFILE_ID }.toMutableList()
+        if (profile != null) profiles.add(profile)
+        repository.saveProfiles(profiles)
+        ScheduleBoundaryReceiver.scheduleNext(context)
+        dailyProfile = profile
+    }
+
+    fun pickTime(currentMinute: Int, onSelected: (Int) -> Unit) {
+        TimePickerDialog(
+            context,
+            { _, hour, minute -> onSelected(hour * 60 + minute) },
+            currentMinute / 60,
+            currentMinute % 60,
+            true
+        ).show()
     }
 
     // 必需权限检查 - 用于自动启用严格模式
@@ -190,6 +218,57 @@ fun SettingsScreen(
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Medium,
                                 lineHeight = 20.sp
+                            )
+                        }
+                    }
+                }
+            }
+
+            item {
+                SectionTitle("每日时间段")
+                Spacer(modifier = Modifier.height(8.dp))
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                ) {
+                    Column {
+                        ToggleItem(
+                            title = "按时间段阻断",
+                            desc = "时间段内被动拦截全部非系统应用，不自动打开 applan",
+                            checked = dailyProfile != null,
+                            onCheckedChange = { enabled ->
+                                saveDailyProfile(
+                                    if (enabled) TimeProfile(
+                                        id = DAILY_PROFILE_ID,
+                                        weekdays = (1..7).toSet(),
+                                        startMinute = 9 * 60,
+                                        endMinute = 17 * 60,
+                                        allowedPackages = emptySet()
+                                    ) else null
+                                )
+                            }
+                        )
+                        dailyProfile?.let { profile ->
+                            HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+                            NavItem(
+                                title = "开始时间",
+                                desc = formatMinute(profile.startMinute),
+                                onClick = {
+                                    pickTime(profile.startMinute) { minute ->
+                                        saveDailyProfile(profile.copy(startMinute = minute))
+                                    }
+                                }
+                            )
+                            HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+                            NavItem(
+                                title = "结束时间",
+                                desc = formatMinute(profile.endMinute),
+                                onClick = {
+                                    pickTime(profile.endMinute) { minute ->
+                                        saveDailyProfile(profile.copy(endMinute = minute))
+                                    }
+                                }
                             )
                         }
                     }
@@ -361,6 +440,10 @@ fun SettingsScreen(
         }
     }
 }
+
+private const val DAILY_PROFILE_ID = "daily-global-block"
+
+private fun formatMinute(value: Int): String = String.format(Locale.US, "%02d:%02d", value / 60, value % 60)
 
 @Composable
 fun SectionTitle(title: String) {

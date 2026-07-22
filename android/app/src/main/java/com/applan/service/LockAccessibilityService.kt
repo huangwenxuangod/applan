@@ -15,6 +15,8 @@ import com.applan.MainActivity
 import com.applan.util.AppConfig
 import com.applan.util.AppPackageResolver
 import com.applan.util.AppState
+import com.applan.util.PolicyRepository
+import com.applan.util.PolicyEventStore
 import com.applan.util.ViolationRecord
 
 class LockAccessibilityService : AccessibilityService() {
@@ -322,6 +324,18 @@ class LockAccessibilityService : AccessibilityService() {
 
     private fun handleWindowEvent(pkg: String) {
         try {
+            val policy = PolicyRepository(this).evaluate()
+            if (policy.isActive) {
+                if (pkg in policy.allowedPackages) {
+                    cancelPendingViolation()
+                    mainHandler.post { BlockOverlay.hideImmediately() }
+                    return
+                }
+                Log.d(TAG, "POLICY BLOCKED: $pkg")
+                performBlock(pkg)
+                return
+            }
+
             if (AppConfig.isExitGranted()) {
                 if (BlockOverlay.isShowing()) {
                     mainHandler.post { BlockOverlay.hideImmediately() }
@@ -390,6 +404,7 @@ class LockAccessibilityService : AccessibilityService() {
                     Log.d(TAG, "Overlay just shown, skipping duplicate show")
                     return@post
                 }
+                PolicyEventStore(this@LockAccessibilityService).record("app_blocked", pkg)
                 BlockOverlay.show(this@LockAccessibilityService)
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to show overlay, falling back to startActivity", e)

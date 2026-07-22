@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.util.Log
 import com.applan.MainActivity
+import com.applan.util.AppConfig
 import com.applan.util.AppState
 
 class BootReceiver : BroadcastReceiver() {
@@ -24,25 +25,22 @@ class BootReceiver : BroadcastReceiver() {
             try {
                 KeepAliveService.start(context)
                 DaemonService.start(context)
+                ScheduleBoundaryReceiver.scheduleNext(context)
                 Log.d(TAG, "Services started after boot")
 
+                AppConfig.setExitGranted(false)
                 AppState.resetGrant()
-
-                try {
-                    val activityIntent = Intent(context, MainActivity::class.java).apply {
+                context.startActivity(
+                    Intent(context, MainActivity::class.java).apply {
                         addFlags(
                             Intent.FLAG_ACTIVITY_NEW_TASK or
-                            Intent.FLAG_ACTIVITY_CLEAR_TOP or
-                            Intent.FLAG_ACTIVITY_SINGLE_TOP
+                                Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                                Intent.FLAG_ACTIVITY_SINGLE_TOP
                         )
-                        putExtra("auto_launch", true)
                         putExtra("boot_triggered", true)
                     }
-                    context.startActivity(activityIntent)
-                    Log.d(TAG, "MainActivity launched from boot receiver")
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to launch MainActivity on boot (expected on locked screen)", e)
-                }
+                )
+                Log.d(TAG, "MainActivity launched after boot")
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to start services on boot", e)
             }

@@ -11,11 +11,20 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.applan.ui.common.swipeToBack
+import com.applan.network.ApplanClient
+import com.applan.util.AppConfig
+import com.applan.util.AppPackageResolver
+import com.applan.util.EventAnalytics
+import com.applan.util.PolicyEventStore
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.util.Calendar
 
 /**
  * 守护看板页面
@@ -43,28 +52,41 @@ private data class AppAttempt(
 fun DashboardScreen(
     onBack: () -> Unit
 ) {
-    // 模拟数据
-    val statCards = remember {
+    val context = LocalContext.current
+    val events = remember { PolicyEventStore(context).getAll() }
+    LaunchedEffect(events) {
+        withContext(Dispatchers.IO) {
+            ApplanClient(context).apply { updateConfig(AppConfig.getServerUrl(), AppConfig.getApiKey()) }.syncEvents(events)
+        }
+    }
+    val calendar = remember { Calendar.getInstance() }
+    val startOfDay = remember {
+        (calendar.clone() as Calendar).apply {
+            set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+    }
+    val summary = remember(events, startOfDay) { EventAnalytics.summarize(events, startOfDay, startOfDay + 86_400_000) }
+    val statCards = remember(summary) {
         listOf(
-            StatCard("🔓", "12", "今日逃脱", Color(0xFFFF6B6B)),
-            StatCard("⏱", "3.2h", "守护时长", Color(0xFF4ECDC4)),
-            StatCard("🔥", "7天", "连续", Color(0xFFFFA726)),
-            StatCard("✅", "83%", "通过率", Color(0xFF66BB6A))
+            StatCard("🛡", "${summary.blockedCount}", "今日阻断", Color(0xFFFF6B6B)),
+            StatCard("⏱", "${summary.focusMinutes}m", "Plan 专注", Color(0xFF4ECDC4)),
+            StatCard("📱", "${summary.topApps.size}", "诱惑应用", Color(0xFFFFA726)),
+            StatCard("✅", "${events.count { it.type == "plan_granted" }}", "已获 Plan", Color(0xFF66BB6A))
         )
     }
 
-    val topApps = remember {
-        listOf(
-            AppAttempt("抖音", "🎵", 23, Color(0xFFFF6B6B)),
-            AppAttempt("微信", "💬", 15, Color(0xFF4CAF50)),
-            AppAttempt("小红书", "📕", 9, Color(0xFFFF5722)),
-            AppAttempt("B站", "📺", 7, Color(0xFF2196F3)),
-            AppAttempt("微博", "📢", 4, Color(0xFFFF9800))
-        )
+    val colors = listOf(Color(0xFFFF6B6B), Color(0xFF4CAF50), Color(0xFFFF5722), Color(0xFF2196F3), Color(0xFFFF9800))
+    val topApps = remember(summary) {
+        summary.topApps.take(5).mapIndexed { index, app ->
+            AppAttempt(AppPackageResolver.getAppName(context, app.packageName), "📱", app.count, colors[index])
+        }
     }
 
-    val weekData = remember {
-        listOf(5, 8, 3, 12, 15, 18, 12) // 周一到周日
+    val weekData = remember(events, startOfDay) {
+        List(7) { index ->
+            val dayStart = startOfDay - (6 - index) * 86_400_000L
+            events.count { it.type == "app_blocked" && it.occurredAt in dayStart until (dayStart + 86_400_000L) }
+        }
     }
     val weekLabels = listOf("一", "二", "三", "四", "五", "六", "日")
     val maxAttempts = weekData.maxOrNull() ?: 1
@@ -195,7 +217,7 @@ fun DashboardScreen(
                         AppAttemptRow(
                             rank = index + 1,
                             app = app,
-                            maxCount = topApps.first().count
+                            maxCount = topApps.maxOfOrNull { it.count } ?: 1
                         )
                         if (index < topApps.size - 1) {
                             Spacer(modifier = Modifier.height(8.dp))

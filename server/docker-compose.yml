@@ -23,6 +23,7 @@ services:
       - ./proxy_backend.py:/app/proxy_backend.py:ro
       # applan.md 必须可写：后端会把用户反复用的借口自动记录/计数到这里
       - ./applan.md:/app/applan.md
+      - ./data:/app/data
     restart: unless-stopped
 
   # 可选：零依赖 mock，不带 AI，仅验证 App↔后端 协议链路

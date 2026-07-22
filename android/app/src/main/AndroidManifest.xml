@@ -192,6 +192,10 @@
             </intent-filter>
         </receiver>
 
+        <receiver
+            android:name=".service.ScheduleBoundaryReceiver"
+            android:exported="false" />
+
         <!-- 前台保活服务 -->
         <service
             android:name=".service.KeepAliveService"

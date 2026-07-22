@@ -27,11 +27,13 @@ OpenAI 兼容的 /v1/chat/completions 透明代理，专门服务 applan App 的
 import os
 import re
 import json
+import hmac
 import asyncio
 import logging
 import pathlib
+import sqlite3
 from datetime import datetime, timezone
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 import httpx
 import uvicorn
@@ -48,6 +50,9 @@ PORT = int(os.getenv("PORT", "8787"))
 PROXY_KEY = os.getenv("PROXY_API_KEY", "")
 MEMORY_FILE = os.getenv("MEMORY_FILE", str(pathlib.Path(__file__).parent / "applan.md"))
 ENABLE_MEMORY_WRITE = os.getenv("ENABLE_MEMORY_WRITE", "true").lower() in ("1", "true", "yes", "on")
+DEVICE_TOKEN = os.getenv("DEVICE_TOKEN", "")
+STATE_DB = os.getenv("STATE_DB", str(pathlib.Path(__file__).parent / "state.db"))
+ALLOW_INSECURE_LOCAL = os.getenv("ALLOW_INSECURE_LOCAL", "false").lower() in ("1", "true", "yes", "on")
 
 SOUL_PATH = pathlib.Path(__file__).parent / "SOUL.md"
 SYSTEM_PROMPT = (
@@ -64,6 +69,36 @@ PASS_THROUGH = (
 
 UPSTREAM_TIMEOUT = httpx.Timeout(300.0, connect=15.0)
 _memory_lock = asyncio.Lock()
+_state_lock = asyncio.Lock()
+
+
+def _init_state_db():
+    with sqlite3.connect(STATE_DB) as db:
+        db.execute(
+            "CREATE TABLE IF NOT EXISTS policy (id INTEGER PRIMARY KEY CHECK(id=1), version INTEGER NOT NULL, body TEXT NOT NULL, updated_at TEXT NOT NULL)"
+        )
+        db.execute(
+            "CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY AUTOINCREMENT, body TEXT NOT NULL, created_at TEXT NOT NULL)"
+        )
+        db.execute(
+            "CREATE TABLE IF NOT EXISTS synced_events (event_id TEXT PRIMARY KEY, body TEXT NOT NULL, occurred_at INTEGER NOT NULL)"
+        )
+
+
+@app.on_event("startup")
+async def initialize_state_db():
+    _init_state_db()
+    if not DEVICE_TOKEN and not ALLOW_INSECURE_LOCAL:
+        log.warning("DEVICE_TOKEN is empty; policy endpoints will reject every request")
+
+
+def require_device_token(request: Request):
+    if ALLOW_INSECURE_LOCAL:
+        return
+    expected = f"Bearer {DEVICE_TOKEN}"
+    actual = request.headers.get("authorization", "")
+    if not DEVICE_TOKEN or not hmac.compare_digest(actual, expected):
+        raise HTTPException(status_code=401, detail="unauthorized")
 
 
 # ---------------------------------------------------------------------------
@@ -207,6 +242,67 @@ async def models():
 async def healthz():
     return {"status": "ok", "model": MODEL, "has_key": bool(KEY),
             "memory": ENABLE_MEMORY_WRITE}
+
+
+@app.get("/v1/policy")
+async def get_policy(request: Request):
+    require_device_token(request)
+    with sqlite3.connect(STATE_DB) as db:
+        row = db.execute("SELECT body FROM policy WHERE id=1").fetchone()
+    return json.loads(row[0]) if row else {"version": 0, "profiles": [], "strict": False}
+
+
+@app.put("/v1/policy")
+async def put_policy(request: Request):
+    require_device_token(request)
+    body = await request.json()
+    if not isinstance(body, dict) or not isinstance(body.get("version"), int) or body["version"] < 0:
+        raise HTTPException(status_code=400, detail="policy requires a non-negative integer version")
+    encoded = json.dumps(body, ensure_ascii=False, separators=(",", ":"))
+    async with _state_lock:
+        with sqlite3.connect(STATE_DB) as db:
+            db.execute(
+                "INSERT INTO policy(id, version, body, updated_at) VALUES(1, ?, ?, ?) "
+                "ON CONFLICT(id) DO UPDATE SET version=excluded.version, body=excluded.body, updated_at=excluded.updated_at",
+                (body["version"], encoded, datetime.now(timezone.utc).isoformat()),
+            )
+    return body
+
+
+@app.post("/v1/events", status_code=202)
+async def post_event(request: Request):
+    require_device_token(request)
+    body = await request.json()
+    if not isinstance(body, dict) or not isinstance(body.get("type"), str) or not body["type"].strip():
+        raise HTTPException(status_code=400, detail="event requires a non-empty type")
+    with sqlite3.connect(STATE_DB) as db:
+        db.execute(
+            "INSERT INTO events(body, created_at) VALUES(?, ?)",
+            (json.dumps(body, ensure_ascii=False, separators=(",", ":")), datetime.now(timezone.utc).isoformat()),
+        )
+    return {"accepted": True}
+
+
+@app.post("/v1/events/batch", status_code=202)
+async def post_event_batch(request: Request):
+    require_device_token(request)
+    body = await request.json()
+    if not isinstance(body, list):
+        raise HTTPException(status_code=400, detail="events must be an array")
+    accepted = 0
+    with sqlite3.connect(STATE_DB) as db:
+        for event in body[:1000]:
+            if not isinstance(event, dict) or not isinstance(event.get("id"), str) or not isinstance(event.get("type"), str):
+                raise HTTPException(status_code=400, detail="each event requires id and type")
+            occurred_at = event.get("occurredAt")
+            if not isinstance(occurred_at, int):
+                raise HTTPException(status_code=400, detail="each event requires occurredAt")
+            cursor = db.execute(
+                "INSERT OR IGNORE INTO synced_events(event_id, body, occurred_at) VALUES(?, ?, ?)",
+                (event["id"], json.dumps(event, ensure_ascii=False, separators=(",", ":")), occurred_at),
+            )
+            accepted += cursor.rowcount
+    return {"accepted": accepted}
 
 
 @app.post("/v1/chat/completions")

@@ -5,6 +5,7 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.util.Log
 import com.applan.BuildConfig
+import com.applan.util.PolicyEvent
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -65,6 +66,32 @@ class ApplanClient(private var context: Context? = null) {
     fun isConfigured(): Boolean = serverUrl.isNotEmpty()
 
     fun getServerUrl(): String = serverUrl
+
+    fun syncEvents(events: List<PolicyEvent>): Boolean {
+        if (!isConfigured() || apiKey.isBlank() || events.isEmpty()) return false
+        val payload = JSONArray().apply {
+            events.forEach { event ->
+                put(JSONObject().apply {
+                    put("id", event.id)
+                    put("type", event.type)
+                    put("occurredAt", event.occurredAt)
+                    put("packageName", event.packageName)
+                    put("durationMinutes", event.durationMinutes)
+                })
+            }
+        }
+        val request = Request.Builder()
+            .url("$serverUrl/v1/events/batch")
+            .post(payload.toString().toRequestBody("application/json".toMediaType()))
+            .header("Authorization", "Bearer $apiKey")
+            .build()
+        return try {
+            client.newCall(request).execute().use { it.isSuccessful }
+        } catch (e: IOException) {
+            Log.d(TAG, "Event sync deferred: ${e.message}")
+            false
+        }
+    }
 
     /**
      * 检查网络是否可用 - 这个方法在调用时要确保在IO线程

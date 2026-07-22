@@ -294,52 +294,17 @@ object AutoStartHelper {
      * 3. 跳系统设置主页（最安全的兜底）
      */
     fun jumpToAutoStartSetting(context: Context) {
-        val manufacturer = Build.MANUFACTURER.lowercase().trim()
-        val brand = Build.BRAND.lowercase().trim()
-
-        Log.d(TAG, "jumpToAutoStartSetting: manufacturer=$manufacturer, brand=$brand")
-
-        // 判断是否是ColorOS系（这些ROM上ACTION_APPLICATION_SETTINGS会直接跳应用管理，是错的）
-        val isColorOS = manufacturer in listOf("oppo", "realme", "oneplus")
-                || brand in listOf("oppo", "realme", "oneplus", "coloros", "oplus")
-
-        // 策略1（首选）：厂商深度链接 → 直接打开自启动管理列表页
-        val targets = VENDOR_AUTOSTART_TARGETS[manufacturer]
-            ?: VENDOR_AUTOSTART_TARGETS[brand]
-
-        if (targets != null) {
-            for (target in targets) {
-                if (tryStartActivity(context, target)) {
-                    Log.d(TAG, "AutoStart: jumped directly to ${target.pkg}/${target.cls}")
-                    return
-                }
-            }
-        }
-
-        // 策略2（非ColorOS系才尝试）：ACTION_APPLICATION_SETTINGS
-        // 在AOSP/MIUI/vivo/华为上通常打开"应用"分类首页，包含自启动入口
-        // 但在ColorOS上它直接跳"应用管理"列表，所以ColorOS系跳过
-        if (!isColorOS) {
-            try {
-                val intent = Intent(Settings.ACTION_APPLICATION_SETTINGS)
-                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                context.startActivity(intent)
-                Log.d(TAG, "AutoStart: opened Settings > Apps via ACTION_APPLICATION_SETTINGS")
-                return
-            } catch (e: Exception) {
-                Log.d(TAG, "ACTION_APPLICATION_SETTINGS failed", e)
-            }
-        }
-
-        // 策略3（最终兜底）：跳系统设置主页
-        // 用户至少能看到设置首页，不会被误导到错误的"应用管理"页
         try {
-            val intent = Intent(Settings.ACTION_SETTINGS)
+            val intent = Intent(Settings.ACTION_APPLICATION_SETTINGS)
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             context.startActivity(intent)
-            Log.d(TAG, "AutoStart: fallback to Settings main page")
+            Log.d(TAG, "AutoStart: opened Settings > Apps")
         } catch (e: Exception) {
-            Log.e(TAG, "Cannot open settings at all", e)
+            try {
+                context.startActivity(Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            } catch (fallback: Exception) {
+                Log.e(TAG, "Cannot open settings", fallback)
+            }
         }
     }
 

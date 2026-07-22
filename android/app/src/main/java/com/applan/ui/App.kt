@@ -34,6 +34,8 @@ import com.applan.util.AppPackageResolver
 import com.applan.util.AppState
 import com.applan.util.AppUpdateManager
 import com.applan.util.CrashHandler
+import com.applan.util.PolicyRepository
+import com.applan.util.PolicyEventStore
 import com.applan.util.ViolationRecord
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -327,6 +329,14 @@ fun ApplanApp(context: Context) {
                 timeoutAt = System.currentTimeMillis() + timeoutMs
             )
             AppState.grantByPlan(plan)
+            PolicyRepository(context).savePlan(
+                com.applan.util.AiPlan(
+                    allowedPackages = result.resolvedPackages,
+                    purpose = result.planDescription,
+                    expiresAt = plan.timeoutAt
+                )
+            )
+            PolicyEventStore(context).record("plan_granted", durationMinutes = result.timeoutMinutes.coerceIn(1, 60))
             BlockOverlay.hide()
             markNeedsReset()
             showTopToast(context, "计划放行：${result.planDescription}，${result.timeoutMinutes}分钟")
