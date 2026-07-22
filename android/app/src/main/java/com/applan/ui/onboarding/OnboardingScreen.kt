@@ -101,7 +101,7 @@ fun OnboardingScreen(
             PermissionItem(
                 id = "autostart",
                 title = "自启动权限",
-                desc = "开机自启+解锁弹出，需要在厂商设置中手动开启后勾选确认",
+                desc = "将在设置首页打开，请依次点「应用 > 自启动」后勾选确认",
                 icon = "🚀",
                 isGranted = { autostartConfirmed },
                 request = { openSettings { AutoStartHelper.jumpToAutoStartSetting(context) } },

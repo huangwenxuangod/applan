@@ -287,7 +287,7 @@ fun SettingsScreen(
                     Column {
                         ToggleItem(
                             title = "自启动",
-                            desc = "开机/解锁自动启动，需在厂商设置开启（在列表中找「applan」）",
+                            desc = "打开设置首页后，依次点「应用 > 自启动」并找到「applan」",
                             checked = false,
                             onCheckedChange = {
                                 openSettings { AutoStartHelper.jumpToAutoStartSetting(context) }

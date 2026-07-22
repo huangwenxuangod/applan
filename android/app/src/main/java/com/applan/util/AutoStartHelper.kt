@@ -9,21 +9,7 @@ import android.provider.Settings
 import android.util.Log
 
 /**
- * 跳转到各大厂商自启动管理页面 + 后台弹出界面权限
- *
- * 2025年7月19日更新：基于多源交叉验证（CSDN 2026-07更新、掘金、腾讯云、GitHub开源项目）
- * 修正了之前错误的路径：
- * - 删除了不存在的 com.oplus.safecenter.ui.bgpopup.BgPopUpManagerActivity
- * - 修正OPPO自启动路径：正确是 com.coloros.safecenter/.startupapp.StartupAppListActivity（无.view子包）
- * - com.oplus.safecenter作为ColorOS 14+的fallback尝试
- * - 新增Vivo OriginOS新路径 VivoAutoLaunchManagerActivity
- * - 新增MIUI专属Action miui.intent.action.OP_AUTO_START
- * - 新增华为startupapp子包路径
- * - 完善三星国行/国际版双路径
- *
- * 重要说明：虽然用户UI路径是"设置→应用→自启动"，但设置应用只是一个外壳，
- * 实际承载自启动管理的Activity在各厂商的安全中心/手机管家包中。
- * com.android.settings中没有直接的自启动管理Activity。
+ * Opens the system Settings home and vendor-specific background-popup settings.
  */
 object AutoStartHelper {
 
@@ -271,40 +257,17 @@ object AutoStartHelper {
     // ==================== 公开API ====================
 
     /**
-     * 跳转到自启动管理页面
-     *
-     * 核心策略（2025年7月19日第二次修正）：
-     *
-     * 关键背景：
-     * - 用户描述的路径是 设置→应用→自启动，但"应用"页面在ColorOS设置中是一个Fragment，
-     *   没有公开Intent可以直达该父页面。
-     * - Settings.ACTION_APPLICATION_SETTINGS 在ColorOS上会直接跳转到"应用管理"列表页，
-     *   而不是"应用"父页面，这是用户反复反馈的问题根源。
-     * - 因此，最佳方案是：直接跳自启动列表页（用户最终要操作的开关页面），一步到位。
-     *
-     * 策略顺序：
-     * 1. 厂商深度链接 → 直接打开自启动管理列表页（用户可以直接看到applan的开关）
-     *    OPPO/Realme/OnePlus: com.coloros.safecenter/.startupapp.StartupAppListActivity
-     *    ColorOS 14+: com.oplus.safecenter/.startupapp.StartupAppListActivity
-     *    MIUI/HyperOS: com.miui.securitycenter/.../AutoStartManagementActivity
-     *    Vivo/OriginOS: com.vivo.permissionmanager/.../BgStartUpManagerActivity
-     *    华为/HarmonyOS: com.huawei.systemmanager/.../StartupNormalAppListActivity
-     * 2. 对于非ColorOS系厂商，尝试 ACTION_APPLICATION_SETTINGS（在AOSP/MIUI/vivo上是应用首页）
-     *    注意：ColorOS系（oppo/realme/oneplus）跳过此步，因为它会直接跳应用管理
-     * 3. 跳系统设置主页（最安全的兜底）
+     * Opens only the Settings home page. The user then follows Settings > Apps > Auto-start.
+     * Do not replace this with app-management or vendor-specific intents: those skip the Apps parent page.
      */
     fun jumpToAutoStartSetting(context: Context) {
         try {
-            val intent = Intent(Settings.ACTION_APPLICATION_SETTINGS)
+            val intent = Intent(Settings.ACTION_SETTINGS)
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             context.startActivity(intent)
-            Log.d(TAG, "AutoStart: opened Settings > Apps")
+            Log.d(TAG, "AutoStart: opened Settings home")
         } catch (e: Exception) {
-            try {
-                context.startActivity(Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-            } catch (fallback: Exception) {
-                Log.e(TAG, "Cannot open settings", fallback)
-            }
+            Log.e(TAG, "Cannot open Settings home", e)
         }
     }
 
@@ -430,28 +393,6 @@ object AutoStartHelper {
             Log.d(TAG, "Failed: ${target.pkg}/${target.cls}: ${e.message}")
             false
         }
-    }
-
-    private fun tryJumpToAppListSettings(context: Context): Boolean {
-        val intents = listOf(
-            Intent(Settings.ACTION_APPLICATION_SETTINGS).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            },
-            Intent(Settings.ACTION_MANAGE_ALL_APPLICATIONS_SETTINGS).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            },
-            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-        )
-
-        for (intent in intents) {
-            try {
-                context.startActivity(intent)
-                return true
-            } catch (_: Exception) {}
-        }
-        return false
     }
 
     private fun tryJumpToAppDetails(context: Context): Boolean {
