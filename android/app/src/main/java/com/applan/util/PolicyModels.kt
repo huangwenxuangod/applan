@@ -16,6 +16,14 @@ data class AiPlan(
     val expiresAt: Long
 )
 
+data class TemporaryPass(
+    val packageName: String,
+    val expiresAt: Long
+) {
+    fun allows(packageName: String, now: Long = System.currentTimeMillis()): Boolean =
+        this.packageName == packageName && expiresAt > now
+}
+
 data class EffectivePolicy(
     val isScheduled: Boolean,
     val isPlanActive: Boolean,
@@ -26,6 +34,38 @@ data class EffectivePolicy(
 
     val isGlobalBlock: Boolean
         get() = isScheduled && allowedPackages.isEmpty()
+}
+
+object BlockingDecision {
+    fun isAllowed(
+        packageName: String,
+        policy: EffectivePolicy,
+        exitGranted: Boolean,
+        planModeEnabled: Boolean,
+        temporaryPass: TemporaryPass?
+    ): Boolean {
+        if (exitGranted && !planModeEnabled) return true
+        if (temporaryPass?.allows(packageName) == true) return true
+        return !policy.isActive || packageName in policy.allowedPackages
+    }
+}
+
+object BlockingCoordinator {
+    enum class Decision { PASSIVE, ALLOWED, BLOCKED }
+
+    fun evaluate(
+        packageName: String?,
+        policy: EffectivePolicy,
+        exitGranted: Boolean,
+        planModeEnabled: Boolean,
+        temporaryPass: TemporaryPass?
+    ): Decision {
+        if (packageName == null) return Decision.PASSIVE
+        if (exitGranted && !planModeEnabled) return Decision.PASSIVE
+        if (temporaryPass?.allows(packageName) == true) return Decision.ALLOWED
+        if (!policy.isActive) return Decision.PASSIVE
+        return if (packageName in policy.allowedPackages) Decision.ALLOWED else Decision.BLOCKED
+    }
 }
 
 object PolicyEngine {

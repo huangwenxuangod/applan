@@ -15,6 +15,7 @@ import com.applan.MainActivity
 import com.applan.util.AppConfig
 import com.applan.util.AppPackageResolver
 import com.applan.util.AppState
+import com.applan.util.BlockingCoordinator
 import com.applan.util.PolicyRepository
 import com.applan.util.PolicyEventStore
 import com.applan.util.ViolationRecord
@@ -324,71 +325,26 @@ class LockAccessibilityService : AccessibilityService() {
 
     private fun handleWindowEvent(pkg: String) {
         try {
-            val policy = PolicyRepository(this).evaluate()
-            if (policy.isActive) {
-                if (pkg in policy.allowedPackages) {
+            val repository = PolicyRepository(this)
+            val policy = repository.evaluate()
+            val temporaryPass = repository.getTemporaryPass()
+            when (BlockingCoordinator.evaluate(
+                pkg, policy, AppConfig.isExitGranted(), AppConfig.isPlanModeEnabled(), temporaryPass
+            )) {
+                BlockingCoordinator.Decision.PASSIVE -> {
+                    mainHandler.post { BlockOverlay.hideImmediately() }
+                    return
+                }
+                BlockingCoordinator.Decision.ALLOWED -> {
                     cancelPendingViolation()
                     mainHandler.post { BlockOverlay.hideImmediately() }
                     return
                 }
-                Log.d(TAG, "POLICY BLOCKED: $pkg")
-                performBlock(pkg)
-                return
-            }
-
-            if (AppConfig.isExitGranted()) {
-                if (BlockOverlay.isShowing()) {
-                    mainHandler.post { BlockOverlay.hideImmediately() }
-                }
-                return
-            }
-
-            val shouldBlock = AppState.shouldBlock()
-
-            if (!shouldBlock) {
-                if (AppState.isInSettingsGracePeriod() && isSettingsPackage(pkg)) {
-                    return
-                }
-                if (AppState.isGrantedByAi() || AppState.isGrantedByEmergency()) {
-                    if (BlockOverlay.isShowing()) {
-                        mainHandler.post { BlockOverlay.hideImmediately() }
-                    }
-                    return
-                }
-                if (AppState.isInSettingsGracePeriod() && isLauncherPackage(pkg)) {
-                    Log.d(TAG, "Back from settings to launcher, blocking")
-                    AppState.endSettingsSession()
+                BlockingCoordinator.Decision.BLOCKED -> {
+                    Log.d(TAG, "POLICY BLOCKED: $pkg")
                     performBlock(pkg)
                     return
                 }
-                if (AppState.isGrantedByPlan()) {
-                    if (AppState.isPackageAllowed(pkg)) {
-                        cancelPendingViolation()
-                        if (BlockOverlay.isShowing()) {
-                            mainHandler.post { BlockOverlay.hide() }
-                        }
-                        return
-                    }
-                    if (isLauncherPackage(pkg)) {
-                        return
-                    }
-                    Log.d(TAG, "PLAN VIOLATION: $pkg not in allowed list")
-                    scheduleViolationCheck(pkg)
-                    performBlock(pkg)
-                    return
-                }
-            }
-
-            if (shouldBlock) {
-                if (AppState.isInSettingsGracePeriod() && isSettingsPackage(pkg)) {
-                    return
-                }
-                if (isLauncherPackage(pkg)) {
-                    performBlock(pkg)
-                    return
-                }
-                Log.d(TAG, "BLOCKED: $pkg - showing overlay")
-                performBlock(pkg)
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error handling window event", e)
@@ -405,7 +361,7 @@ class LockAccessibilityService : AccessibilityService() {
                     return@post
                 }
                 PolicyEventStore(this@LockAccessibilityService).record("app_blocked", pkg)
-                BlockOverlay.show(this@LockAccessibilityService)
+                BlockOverlay.show(this@LockAccessibilityService, pkg)
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to show overlay, falling back to startActivity", e)
                 fallbackPullBack(pkg)

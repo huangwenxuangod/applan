@@ -16,6 +16,8 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.applan.MainActivity
+import com.applan.util.PolicyRepository
+import com.applan.util.TemporaryPass
 
 /**
  * AppBlock式全局遮罩拦截器
@@ -55,7 +57,11 @@ object BlockOverlay {
      * 显示全局拦截遮罩（毫秒级响应）
      * 只显示遮罩，不自动拉起Activity - 用户必须点击按钮才返回
      */
-    fun show(context: Context) {
+    fun show(context: Context, blockedPackage: String? = null) {
+        if (blockedPackage == null) {
+            Log.d(TAG, "Skip overlay without a blocked foreground package")
+            return
+        }
         if (isShowing) {
             // 已经在显示，不需要重复操作
             Log.d(TAG, "Overlay already showing, skip")
@@ -78,7 +84,7 @@ object BlockOverlay {
             windowManager = wm
 
             // 创建全屏遮罩布局
-            val layout = createOverlayView(context)
+            val layout = createOverlayView(context, blockedPackage)
 
             // WindowManager参数 - 全屏覆盖所有内容
             val params = WindowManager.LayoutParams(
@@ -158,7 +164,7 @@ object BlockOverlay {
     /**
      * 创建遮罩View - 黑色半透明背景 + 锁图标 + 提示文字 + 返回按钮
      */
-    private fun createOverlayView(context: Context): View {
+    private fun createOverlayView(context: Context, blockedPackage: String?): View {
         val density = context.resources.displayMetrics.density
         val pad16 = (16 * density).toInt()
         val pad24 = (24 * density).toInt()
@@ -229,6 +235,24 @@ object BlockOverlay {
             gravity = Gravity.CENTER
         }
         root.addView(backBtn, btnParams)
+
+        if (blockedPackage != null) {
+            val temporaryPassButton = Button(context).apply {
+                text = "临时放行 5 分钟"
+                this.textSize = btnTextSize
+                setTextColor(Color.WHITE)
+                setBackgroundColor(Color.parseColor("#FF444444"))
+                setPadding(pad32, pad16, pad32, pad16)
+                isAllCaps = false
+                setOnClickListener {
+                    PolicyRepository(context).saveTemporaryPass(
+                        TemporaryPass(blockedPackage, System.currentTimeMillis() + 5 * 60_000L)
+                    )
+                    hideImmediately()
+                }
+            }
+            root.addView(temporaryPassButton, btnParams.apply { topMargin = pad16 })
+        }
 
         return root
     }

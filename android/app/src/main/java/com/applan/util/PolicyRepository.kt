@@ -78,6 +78,34 @@ class PolicyRepository(context: Context) {
         preferences.edit().remove(KEY_PLAN).apply()
     }
 
+    fun getTemporaryPass(): TemporaryPass? {
+        val value = preferences.getString(KEY_TEMPORARY_PASS, null) ?: return null
+        val pass = try {
+            JSONObject(value).let { TemporaryPass(it.getString("packageName"), it.getLong("expiresAt")) }
+        } catch (_: Exception) {
+            null
+        }
+        if (pass == null || pass.expiresAt <= System.currentTimeMillis()) {
+            clearTemporaryPass()
+            return null
+        }
+        return pass
+    }
+
+    fun saveTemporaryPass(pass: TemporaryPass) {
+        preferences.edit().putString(
+            KEY_TEMPORARY_PASS,
+            JSONObject().apply {
+                put("packageName", pass.packageName)
+                put("expiresAt", pass.expiresAt)
+            }.toString()
+        ).apply()
+    }
+
+    fun clearTemporaryPass() {
+        preferences.edit().remove(KEY_TEMPORARY_PASS).apply()
+    }
+
     fun evaluate(now: Calendar = Calendar.getInstance()): EffectivePolicy =
         PolicyEngine.evaluate(getProfiles(), getPlan(), now)
 
@@ -93,5 +121,6 @@ class PolicyRepository(context: Context) {
         const val PREF_NAME = "app_config"
         const val KEY_PROFILES = "time_profiles"
         const val KEY_PLAN = "ai_plan"
+        const val KEY_TEMPORARY_PASS = "temporary_pass"
     }
 }

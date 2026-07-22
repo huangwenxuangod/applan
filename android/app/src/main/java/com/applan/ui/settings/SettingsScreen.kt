@@ -6,6 +6,7 @@ import android.os.Build
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Lock
@@ -25,6 +26,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import com.applan.R
 import com.applan.service.ScheduleBoundaryReceiver
 import com.applan.util.AppConfig
+import com.applan.util.AppPackageResolver
 import com.applan.util.AppState
 import com.applan.util.AppUpdateManager
 import com.applan.util.AutoStartHelper
@@ -35,6 +37,7 @@ import com.applan.util.TimeProfile
 import com.applan.ui.common.swipeToBack
 import kotlinx.coroutines.launch
 import java.util.Locale
+import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -97,17 +100,14 @@ fun SettingsScreen(
         mutableStateOf(AppConfig.isPlanModeEnabled())
     }
 
-    var dailyProfile by remember {
-        mutableStateOf(PolicyRepository(context).getProfiles().firstOrNull { it.id == DAILY_PROFILE_ID })
-    }
+    var timeProfiles by remember { mutableStateOf(PolicyRepository(context).getProfiles()) }
+    var editingAppsFor by remember { mutableStateOf<TimeProfile?>(null) }
 
-    fun saveDailyProfile(profile: TimeProfile?) {
+    fun saveProfiles(profiles: List<TimeProfile>) {
         val repository = PolicyRepository(context)
-        val profiles = repository.getProfiles().filterNot { it.id == DAILY_PROFILE_ID }.toMutableList()
-        if (profile != null) profiles.add(profile)
         repository.saveProfiles(profiles)
         ScheduleBoundaryReceiver.scheduleNext(context)
-        dailyProfile = profile
+        timeProfiles = profiles
     }
 
     fun pickTime(currentMinute: Int, onSelected: (Int) -> Unit) {
@@ -161,6 +161,37 @@ fun SettingsScreen(
         onBeforeOpenSettings()
         AppState.startSettingsSession()
         action()
+    }
+
+    editingAppsFor?.let { profile ->
+        val apps = remember { AppPackageResolver.getLaunchableApps(context) }
+        var selected by remember(profile.id) { mutableStateOf(profile.allowedPackages) }
+        AlertDialog(
+            onDismissRequest = { editingAppsFor = null },
+            title = { Text("允许应用") },
+            text = {
+                LazyColumn(modifier = Modifier.heightIn(max = 420.dp)) {
+                    items(apps, key = { it.second }) { (name, packageName) ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().clickable {
+                                selected = if (packageName in selected) selected - packageName else selected + packageName
+                            },
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Checkbox(checked = packageName in selected, onCheckedChange = null)
+                            Text(name, modifier = Modifier.padding(start = 8.dp))
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    saveProfiles(timeProfiles.map { if (it.id == profile.id) it.copy(allowedPackages = selected) else it })
+                    editingAppsFor = null
+                }) { Text("保存") }
+            },
+            dismissButton = { TextButton(onClick = { editingAppsFor = null }) { Text("取消") } }
+        )
     }
 
     Scaffold(
@@ -225,7 +256,7 @@ fun SettingsScreen(
             }
 
             item {
-                SectionTitle("每日时间段")
+                SectionTitle("专注时间段")
                 Spacer(modifier = Modifier.height(8.dp))
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -233,30 +264,25 @@ fun SettingsScreen(
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
                 ) {
                     Column {
-                        ToggleItem(
-                            title = "按时间段阻断",
-                            desc = "时间段内被动拦截全部非系统应用，不自动打开 applan",
-                            checked = dailyProfile != null,
-                            onCheckedChange = { enabled ->
-                                saveDailyProfile(
-                                    if (enabled) TimeProfile(
-                                        id = DAILY_PROFILE_ID,
-                                        weekdays = (1..7).toSet(),
-                                        startMinute = 9 * 60,
-                                        endMinute = 17 * 60,
-                                        allowedPackages = emptySet()
-                                    ) else null
-                                )
-                            }
-                        )
-                        dailyProfile?.let { profile ->
+                        timeProfiles.forEach { profile ->
+                            Text(
+                                "${formatMinute(profile.startMinute)} - ${formatMinute(profile.endMinute)}",
+                                modifier = Modifier.padding(start = 16.dp, top = 14.dp),
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                "仅允许 ${profile.allowedPackages.size} 个应用",
+                                modifier = Modifier.padding(start = 16.dp, top = 2.dp),
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                             HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
                             NavItem(
                                 title = "开始时间",
                                 desc = formatMinute(profile.startMinute),
                                 onClick = {
                                     pickTime(profile.startMinute) { minute ->
-                                        saveDailyProfile(profile.copy(startMinute = minute))
+                                        saveProfiles(timeProfiles.map { if (it.id == profile.id) profile.copy(startMinute = minute) else it })
                                     }
                                 }
                             )
@@ -266,11 +292,25 @@ fun SettingsScreen(
                                 desc = formatMinute(profile.endMinute),
                                 onClick = {
                                     pickTime(profile.endMinute) { minute ->
-                                        saveDailyProfile(profile.copy(endMinute = minute))
+                                        saveProfiles(timeProfiles.map { if (it.id == profile.id) profile.copy(endMinute = minute) else it })
                                     }
                                 }
                             )
+                            HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+                            NavItem("允许应用", "${profile.allowedPackages.size} 个", onClick = { editingAppsFor = profile })
+                            TextButton(
+                                onClick = { saveProfiles(timeProfiles.filterNot { it.id == profile.id }) },
+                                modifier = Modifier.padding(start = 8.dp)
+                            ) { Text("删除此时间段") }
                         }
+                        TextButton(
+                            onClick = {
+                                saveProfiles(timeProfiles + TimeProfile(
+                                    UUID.randomUUID().toString(), (1..7).toSet(), 9 * 60, 10 * 60, DEFAULT_ALLOWED_PACKAGES
+                                ))
+                            },
+                            modifier = Modifier.padding(8.dp)
+                        ) { Text("添加时间段") }
                     }
                 }
             }
@@ -442,6 +482,15 @@ fun SettingsScreen(
 }
 
 private const val DAILY_PROFILE_ID = "daily-global-block"
+
+private val DEFAULT_ALLOWED_PACKAGES = setOf(
+    "com.tencent.mm",
+    "com.sankuai.meituan",
+    "com.sankuai.meituan.takeoutnew",
+    "com.eg.android.AlipayGphone",
+    "com.autonavi.minimap",
+    "com.android.camera"
+)
 
 private fun formatMinute(value: Int): String = String.format(Locale.US, "%02d:%02d", value / 60, value % 60)
 

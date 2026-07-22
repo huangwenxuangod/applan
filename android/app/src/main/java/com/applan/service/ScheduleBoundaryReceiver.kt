@@ -8,14 +8,13 @@ import android.content.Intent
 import android.os.Build
 import android.provider.Settings
 import com.applan.util.PolicyRepository
+import com.applan.util.AppConfig
 import java.util.Calendar
 
 class ScheduleBoundaryReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val active = PolicyRepository(context).evaluate().isScheduled
-        if (active && Settings.canDrawOverlays(context)) {
-            BlockOverlay.show(context)
-        } else if (!active) {
+        if (!active || (AppConfig.isExitGranted() && !AppConfig.isPlanModeEnabled())) {
             BlockOverlay.hide()
         }
         scheduleNext(context)

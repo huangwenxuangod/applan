@@ -204,6 +204,17 @@ object AppPackageResolver {
         }
     }
 
+    fun getLaunchableApps(context: Context): List<Pair<String, String>> = try {
+        context.packageManager.getInstalledApplications(0)
+            .asSequence()
+            .filter { context.packageManager.getLaunchIntentForPackage(it.packageName) != null }
+            .map { context.packageManager.getApplicationLabel(it).toString() to it.packageName }
+            .sortedBy { it.first.lowercase() }
+            .toList()
+    } catch (_: Exception) {
+        emptyList()
+    }
+
     @Synchronized
     private fun ensureCache(context: Context) {
         val now = System.currentTimeMillis()

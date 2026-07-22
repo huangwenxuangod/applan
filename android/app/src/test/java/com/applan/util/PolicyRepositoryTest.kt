@@ -41,4 +41,17 @@ class PolicyRepositoryTest {
 
         assertEquals(null, repository.getPlan())
     }
+
+    @Test
+    fun `temporary pass survives repository recreation and expires`() {
+        val pass = TemporaryPass("com.sankuai.meituan", System.currentTimeMillis() + 300_000)
+
+        repository.saveTemporaryPass(pass)
+
+        assertEquals(pass, PolicyRepository(ApplicationProvider.getApplicationContext()).getTemporaryPass())
+
+        repository.saveTemporaryPass(TemporaryPass("com.sankuai.meituan", System.currentTimeMillis() - 1))
+
+        assertEquals(null, repository.getTemporaryPass())
+    }
 }

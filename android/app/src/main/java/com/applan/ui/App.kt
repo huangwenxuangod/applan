@@ -266,7 +266,7 @@ fun ApplanApp(context: Context) {
             AppConfig.setExitGranted(true)
             AppState.grantByAi()
             // 立即隐藏遮罩，确保用户回到桌面时看不到遮罩
-            BlockOverlay.hide()
+            BlockOverlay.hideImmediately()
             markNeedsReset()
             activity?.moveTaskToBack(true)
         }
@@ -276,7 +276,7 @@ fun ApplanApp(context: Context) {
             AppConfig.setExitGranted(true)
             AppState.grantByEmergency()
             // 立即隐藏遮罩
-            BlockOverlay.hide()
+            BlockOverlay.hideImmediately()
             markNeedsReset()
             activity?.moveTaskToBack(true)
             currentScreen = Screen.Chat

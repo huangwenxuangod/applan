@@ -257,7 +257,7 @@ class KeepAliveService : Service() {
                 Log.d(TAG, "Screen event: $action")
                 if (action == Intent.ACTION_SCREEN_ON || action == Intent.ACTION_USER_PRESENT) {
                     handler?.postDelayed({
-                        if (AppState.shouldBlock() && !AppState.isActivityInForeground) {
+                        if (!AppConfig.isExitGranted() && AppState.shouldBlock() && !AppState.isActivityInForeground) {
                             if (!BlockOverlay.isShowing() && !BlockOverlay.wasJustShown(2000)) {
                                 mainHandler.post { BlockOverlay.show(context) }
                             }
